@@ -3,6 +3,11 @@ kind: PersistentVolumeClaim
 metadata:
   namespace: {{ .Release.Namespace }}
   name: {{ .Release.Name }}-mysql-pvc
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/instance: mysql
+    app.kubernetes.io/component: mysql
+    app.kubernetes.io/part-of: {{ .Release.Name }}
 spec:
   accessModes:
     - ReadWriteMany

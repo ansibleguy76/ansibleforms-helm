@@ -47,6 +47,8 @@ spec:
             - name: mysql-my-cnf
               mountPath: /etc/mysql/my.cnf
               subPath: my.cnf
+            - name: init-script # init script
+              mountPath: /docker-entrypoint-initdb.d
       restartPolicy: Always
       volumes:
         - name: mysql-persistent-storage
@@ -58,3 +60,6 @@ spec:
             items:
             - key: my.cnf
               path: my.cnf
+        - name: init-script
+          configMap:
+            name: mysql-init-script
