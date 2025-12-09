@@ -82,3 +82,12 @@ forms:
     name: ""                          # existing ConfigMap name
     key: forms.yaml                   # clave dentro del ConfigMap
     mountPath: /app/dist/persistent/forms.yaml
+  extraFormsConfigMap:
+    enabled: false
+    name: ""                          # existing ConfigMap name for extra forms
+    mountPath: /app/dist/persistent/forms
+  customJs:
+    enabled: false
+    name: ""                          # existing ConfigMap name for custom.js
+    key: custom.js                    # key inside the ConfigMap
+    mountPath: /app/dist/src/functions/custom.js

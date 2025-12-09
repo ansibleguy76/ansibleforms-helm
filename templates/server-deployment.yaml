@@ -73,14 +73,29 @@ spec:
           volumeMounts:
             - mountPath: /app/dist/persistent
               name: server-persistent-storage
-            {{- if .Values.forms.configMap.enabled }}
+            {{- with .Values.forms }}
+              {{- with .configMap }}
+                {{- if .enabled }}
             - name: forms-config
-              mountPath: {{ .Values.forms.configMap.mountPath }}
-              subPath: {{ .Values.forms.configMap.key }}
-            {{- end }}
-            {{- if .Values.forms.extraFormsConfigMap.enabled }}
+              mountPath: {{ .mountPath }}
+              subPath: {{ .key }}
+                {{- end }}
+              {{- end }}
+
+              {{- with .extraFormsConfigMap }}
+                {{- if .enabled }}
             - name: forms-extra-config
-              mountPath: {{ .Values.forms.extraFormsConfigMap.mountPath }}
+              mountPath: {{ .mountPath }}
+                {{- end }}
+              {{- end }}
+
+              {{- with .customJs }}
+                {{- if .enabled }}
+            - name: forms-custom-js
+              mountPath: {{ .mountPath }}
+              subPath: {{ .key }}
+                {{- end }}
+              {{- end }}
             {{- end }}
           imagePullPolicy: Always
       restartPolicy: Always
@@ -88,13 +103,30 @@ spec:
         - name: server-persistent-storage
           persistentVolumeClaim:
             claimName: {{ .Release.Name }}-server-pvc
-        {{- if .Values.forms.configMap.enabled }}
+        {{- with .Values.forms }}
+          {{- with .configMap }}
+            {{- if .enabled }}
         - name: forms-config
           configMap:
-            name: {{ .Values.forms.configMap.name }}
-        {{- end }}
-        {{- if .Values.forms.extraFormsConfigMap.enabled }}
+            name: {{ .name }}
+            {{- end }}
+          {{- end }}
+
+          {{- with .extraFormsConfigMap }}
+            {{- if .enabled }}
         - name: forms-extra-config
           configMap:
-            name: {{ .Values.forms.extraFormsConfigMap.name }}
+            name: {{ .name }}
+            {{- end }}
+          {{- end }}
+
+          {{- with .customJs }}
+            {{- if .enabled }}
+        - name: forms-custom-js
+          configMap:
+            name: {{ .name }}
+            {{- end }}
+          {{- end }}
         {{- end }}
+
+
