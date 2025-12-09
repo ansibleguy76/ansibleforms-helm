@@ -1,4 +1,4 @@
 apiVersion: v2
 name: ansibleforms
-version: 0.1.0
+version: 0.1.1
 description: A Helm chart for AnsibleForms environment

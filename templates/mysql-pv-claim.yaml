@@ -14,6 +14,44 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.mysql.size }}
-  storageClassName: ''
-  volumeName: {{ .Release.Name }}-mysql-pv
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  namespace: {{ .Release.Namespace }}
+  name: {{ .Release.Name }}-mysql-pvc
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/instance: mysql
+    app.kubernetes.io/component: mysql
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: {{ .Values.storage.mysql.size }}
+
+  {{- /* Normalizamos valores para evitar nil pointer */}}
+  {{- $mysql := .Values.storage.mysql | default dict -}}
+  {{- $static := $mysql.static | default dict -}}
+
+  {{- if $static.enabled }}
+
+  {{- /* MODO PV ESTÁTICO: se espera que exista un PV con ese nombre */}}
+  {{- if $static.storageClassName }}
+  storageClassName: {{ $static.storageClassName }}
+  {{- else }}
+  storageClassName: ""        # patrón típico para PV estático sin StorageClass
+  {{- end }}
+  volumeName: {{ default (printf "%s-mysql-pv" .Release.Name) $static.volumeName }}
+
+  {{- else }}
+
+  {{- /* MODO DINÁMICO: usamos StorageClass (Longhorn, NFS-CSI, etc.) */}}
+  {{- if $mysql.className }}
+  storageClassName: {{ $mysql.className }}
+  {{- end }}
+
+  {{- end }}
+
 

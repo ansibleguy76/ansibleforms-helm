@@ -14,5 +14,22 @@ spec:
   resources:
     requests:
       storage: {{ .Values.storage.server.size }}
-  storageClassName: ''
-  volumeName: {{ .Release.Name }}-server-pv
+  {{- $server := .Values.storage.server | default dict -}}
+  {{- $static := $server.static | default dict -}}
+
+  {{- if $static.enabled }}
+
+  {{- if $static.storageClassName }}
+  storageClassName: {{ $static.storageClassName }}
+  {{- else }}
+  storageClassName: ""
+  {{- end }}
+  volumeName: {{ default (printf "%s-server-pv" .Release.Name) $static.volumeName }}
+
+  {{- else }}
+
+  {{- if $server.className }}
+  storageClassName: {{ $server.className }}
+  {{- end }}
+
+  {{- end }}
