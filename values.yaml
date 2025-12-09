@@ -28,10 +28,10 @@ service:
 
 storage:
   server:
-    className: longhorn # if not set, uses default storage class
+    className: # if not set, uses default storage class
     size: 1Gi
   mysql:
-    className: longhorn # if not set, uses default storage class 
+    className: # if not set, uses default storage class 
     size: 1Gi
 
 container:
