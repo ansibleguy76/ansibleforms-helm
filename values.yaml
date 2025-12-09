@@ -30,9 +30,17 @@ storage:
   server:
     className: # if not set, uses default storage class
     size: 1Gi
+    static:
+      enabled: false             # true => uses PV static
+      volumeName: ""             # By default we will use "<release>-server-pv" if it is empty
+      storageClassName: ""       # For static PVs; if you leave it empty we generate "" in the PVC
   mysql:
     className: # if not set, uses default storage class 
     size: 1Gi
+    static:
+      enabled: false             # true => uses PV static
+      volumeName: ""             # By default we will use "<release>-server-pv" if it is empty
+      storageClassName: ""       # For static PVs; if you leave it empty we generate "" in the PVC
 
 container:
   server: 
