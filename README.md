@@ -360,11 +360,83 @@ helm install ansibleforms ./ansibleforms-helm -f ./my_values.yaml -n ansibleform
 
 ## Customization
 
+### Basic 
+
 - All environment variables can be set in `env:`.
 - All resource limits, storage, and service types are configurable.
 - Ingress can be enabled/disabled and fully customized.
 - Storage can be backed by dynamic StorageClasses or static PVs as needed.
 - Forms configuration (`forms.yaml` and additional `forms/*.yaml`) and `custom.js` can be managed via ConfigMaps as shown above.
+
+### Extras 1. Define extra volumes that will be available to the pod
+```
+
+containers:
+  server:
+    # ------------------------------------------------------------------------------
+    # ADD HERE EXTRA VOLUME MOUNTS (if needed) (e.g CUSTOM CA CONFIGMAP or SECRET)
+    # ------------------------------------------------------------------------------
+    extraVolumes:
+      - name: ca-certs-configmap
+        configMap:
+          name: ca-certs-configmap
+            
+```
+
+### Extras 2. Define extra volumes mounts that will be available to the pod
+```
+containers:
+  server:
+    # ---------------------------------------------------
+    # ENABLE THIS FOR CUSTOM CA CERTS
+    # ---------------------------------------------------
+    extraVolumeMounts:
+      - name: ca-certs-configmap
+        mountPath: /etc/custom-certs/custom-ca.crt
+        subPath: custom-ca.crt
+        readOnly: true
+            
+```
+### Extras 3. Define one or more init containers (e.g for changing the ownership of the specified directory)
+```
+containers:
+  server:
+    initContainers:
+      - name: prepare-persistent-volume
+        image: ansibleguy/ansibleforms:6.1.3-rc
+        imagePullPolicy: IfNotPresent
+        # This command changes the ownership of the specified directory.
+        command: ["sh", "-c", "chown -R 1000:1000 /app/dist/persistent"]
+        securityContext:
+          # The container must run as the root user to have permission to chown.
+          runAsUser: 0
+        volumeMounts:
+          - name: server-persistent-storage
+            mountPath: /app/dist/persistent
+```
+### Extras 4. Configure extra environment variables
+```
+applications:
+  server:
+    env:
+    # ******** UNCOMMENT TO IGNORE PRIVATE CA CERTS ********
+    # NODE_TLS_REJECT_UNAUTHORIZED: 0
+
+    # ******** UNCOMMENT THIS FOR PRIVATE CA CERTS ********
+    # NODE_EXTRA_CA_CERTS: /etc/custom-certs/custom-ca.crt
+```
+
+
+### Extras 5. Other possible settings
+```
+applications:
+  mysql:
+    password: <ENTER_PASSWORD_HERE>
+    user: root
+    # host: "mysql"   -> Setup custom mysql
+    # port: "3306"    -> Setup custom mysql port
+```
+
 
 ## Notes
 

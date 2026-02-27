@@ -23,8 +23,12 @@ spec:
         app.kubernetes.io/component: database
         app.kubernetes.io/part-of: {{ .Release.Name }}
     spec:
+{{- if .Values.containers.mysql.initContainers }}
+      initContainers:
+{{- toYaml .Values.containers.mysql.initContainers | nindent 8 }}
+{{- end }}
       containers:
-        - image: {{ .Values.container.mysql.image }}
+        - image: {{ .Values.containers.mysql.image }}
           name: mysql
           ports:
             - containerPort: 3306
@@ -36,11 +40,11 @@ spec:
                   key: DB_PASSWORD
           resources:
             limits:
-              cpu: {{ .Values.container.mysql.resources.limits.cpu }}
-              memory: {{ .Values.container.mysql.resources.limits.memory }}
+              cpu: {{ .Values.containers.mysql.resources.limits.cpu }}
+              memory: {{ .Values.containers.mysql.resources.limits.memory }}
             requests:
-              cpu: {{ .Values.container.mysql.resources.requests.cpu }}
-              memory: {{ .Values.container.mysql.resources.requests.memory }}
+              cpu: {{ .Values.containers.mysql.resources.requests.cpu }}
+              memory: {{ .Values.containers.mysql.resources.requests.memory }}
           volumeMounts:
             - mountPath: /var/lib/mysql
               name: mysql-persistent-storage
