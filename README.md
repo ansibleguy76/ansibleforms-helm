@@ -368,29 +368,26 @@ helm install ansibleforms ./ansibleforms-helm -f ./my_values.yaml -n ansibleform
 - Storage can be backed by dynamic StorageClasses or static PVs as needed.
 - Forms configuration (`forms.yaml` and additional `forms/*.yaml`) and `custom.js` can be managed via ConfigMaps as shown above.
 
-### Extras 1. Define extra volumes that will be available to the pod
+### Extras 1. Define extra volumes (root level) that you want to mount to containers.
 ```
-
-containers:
-  server:
-    # ------------------------------------------------------------------------------
-    # ADD HERE EXTRA VOLUME MOUNTS (if needed) (e.g CUSTOM CA CONFIGMAP or SECRET)
-    # ------------------------------------------------------------------------------
-    extraVolumes:
-      - name: ca-certs-configmap
-        configMap:
-          name: ca-certs-configmap
+extraVolumes:
+  # ------------------------------------------------------------------------------
+  # ADD HERE EXTRA VOLUME MOUNTS (if needed) (e.g CUSTOM CA CONFIGMAP or SECRET)
+  # ------------------------------------------------------------------------------
+  - name: ca-certs-configmap
+    configMap:
+      name: ca-certs-configmap
             
 ```
 
-### Extras 2. Define extra volumes mounts that will be available to the pod
+### Extras 2. Define extra volumes mounts that will be available to the server pod
 ```
 containers:
   server:
-    # ---------------------------------------------------
-    # ENABLE THIS FOR CUSTOM CA CERTS
-    # ---------------------------------------------------
     extraVolumeMounts:
+      # ------------------------------------------------------------------
+      # ENABLE THIS FOR CUSTOM CA CERTS (Must create configmap manually!)
+      # ------------------------------------------------------------------
       - name: ca-certs-configmap
         mountPath: /etc/custom-certs/custom-ca.crt
         subPath: custom-ca.crt
@@ -427,7 +424,7 @@ applications:
 ```
 
 
-### Extras 5. Other possible settings
+### Extras 5. Other possible settings (other applications)
 ```
 applications:
   mysql:
