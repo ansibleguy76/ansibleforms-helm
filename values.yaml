@@ -45,6 +45,8 @@ containers:
 
   server:
     image: ansibleguy/ansibleforms:6.1.3-rc 
+    replicas: 1
+    strategy: "RollingUpdate"
     resources:
       limits:
         cpu: '4'
@@ -64,6 +66,21 @@ containers:
         volumeMounts:
           - name: server-persistent-storage
             mountPath: /app/dist/persistent
+
+  # ------------------------------------------------------------------------------
+  # LIVENESS / READINESS CONFIGURATION
+  # ------------------------------------------------------------------------------
+
+    liveness:
+      path: /
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 15
+    readiness:
+      path: /
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 15
 
   # ---------------------------------------------------
   # ENABLE THIS FOR CUSTOM COMMANDS
