@@ -435,6 +435,26 @@ applications:
 ```
 
 
+### Extras 5. Server Liveness and Readiness
+#### Note: In case you face readiness issues or 503 Server errors after long api requests + big latency queries then increase the timeout value below.
+```
+
+containers:
+  server:
+    liveness:
+      path: /
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 15
+    readiness:
+      path: /
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 15
+
+```
+
+
 ## Notes
 
 - Pods/services are named and discoverable by their service name within the namespace.
