@@ -1,12 +1,11 @@
 
-{{- $strategy := (.Values.strategy | default dict) }}
 {{- $containers := (.Values.containers | default dict) }}
 {{- $app := (.Values.applications | default dict) }}
 {{- $server := ($containers.server | default dict) }}
-{{- $probes := (.Values.probes | default dict) }}
-{{- $liveness := ($probes.liveness | default dict) }}
-{{- $readiness := ($probes.readiness | default dict) }}
+{{- $liveness := ($server.liveness | default dict) }}
+{{- $readiness := ($server.readiness | default dict) }}
 {{- $resources := ($server.resources | default dict) }}
+{{- $strategy := ($server.strategy | default dict) }}
 {{- $limits := ($resources.limits | default dict) }}
 {{- $requests := ($resources.requests | default dict) }}
 {{- $appServer := ($app.server | default dict) }}
@@ -22,20 +21,20 @@ metadata:
   name: server
   namespace: {{ .Release.Namespace }}
 spec:
-  replicas: {{ .Values.replicaCount | default 1 }}
+  replicas: {{ $server.replicaCount | default 1 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: server
 
   strategy:
-    type: {{ $strategy.type | default "Recreate" }}
+    type: {{ $strategy.type | default "RollingUpdate" }}
 
   template:
     metadata:
       labels:
         app.kubernetes.io/name: server
     spec:
-      serviceAccountName: {{ .Values.serviceAccountName | default "default" }}
+      serviceAccountName: {{ $server.serviceAccountName | default "default" }}
 
 
       {{- if $server.initContainers }}
@@ -134,16 +133,18 @@ spec:
               path: {{ $liveness.path | default "/" }}
               port: {{ if $https }}443{{ else }}80{{ end }}
               scheme: {{ if $https }}HTTPS{{ else }}HTTP{{ end }}
-            initialDelaySeconds: {{ $liveness.initialDelaySeconds | default 30 }}
-            periodSeconds: {{ $liveness.periodSeconds | default 10 }}
+            initialDelaySeconds: {{ $liveness.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ $liveness.periodSeconds | default 15 }}
+            timeoutSeconds: {{ $liveness.timeoutSeconds | default 15 }}
 
           readinessProbe:
             httpGet:
               path: {{ $readiness.path | default "/" }}
               port: {{ if $https }}443{{ else }}80{{ end }}
               scheme: {{ if $https }}HTTPS{{ else }}HTTP{{ end }}
-            initialDelaySeconds: {{ $readiness.initialDelaySeconds | default 10 }}
-            periodSeconds: {{ $readiness.periodSeconds | default 5 }}
+            initialDelaySeconds: {{ $readiness.initialDelaySeconds | default 15 }}
+            periodSeconds: {{ $readiness.periodSeconds | default 15 }}
+            timeoutSeconds: {{ $readiness.timeoutSeconds | default 15 }}
 
           volumeMounts:
             - mountPath: /app/dist/persistent
