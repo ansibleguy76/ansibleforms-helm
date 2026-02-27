@@ -13,7 +13,7 @@ spec:
     - ReadWriteMany
   resources:
     requests:
-      storage: {{ .Values.storage.mysql.size }}
+      storage: {{ .Values.storages.mysql.size }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -29,10 +29,10 @@ spec:
     - ReadWriteMany
   resources:
     requests:
-      storage: {{ .Values.storage.mysql.size }}
+      storage: {{ .Values.storages.mysql.size }}
 
   {{- /* Normalizamos valores para evitar nil pointer */}}
-  {{- $mysql := .Values.storage.mysql | default dict -}}
+  {{- $mysql := .Values.storages.mysql | default dict -}}
   {{- $static := $mysql.static | default dict -}}
 
   {{- if $static.enabled }}
@@ -53,5 +53,3 @@ spec:
   {{- end }}
 
   {{- end }}
-
-

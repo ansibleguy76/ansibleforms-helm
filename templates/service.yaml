@@ -4,13 +4,13 @@ metadata:
   namespace: {{ .Release.Namespace }}
   name: server
 spec:
-  type: {{ .Values.service.server.type }}
-  {{- if and (eq .Values.service.server.type "LoadBalancer") .Values.service.server.loadbalancer.ip }}
-  loadBalancerIP: {{ .Values.service.server.loadbalancer.ip }}
+  type: {{ .Values.services.server.type }}
+  {{- if and (eq .Values.services.server.type "LoadBalancer") .Values.services.server.loadbalancer.ip }}
+  loadBalancerIP: {{ .Values.services.server.loadbalancer.ip }}
   {{- end }}
   ports:
-    - port: {{ if eq (toString .Values.application.server.env.HTTPS) "1" }}443{{ else }}80{{ end }}
-      targetPort: {{ if eq (toString .Values.application.server.env.HTTPS) "1" }}443{{ else }}80{{ end }}
+    - port: {{ if eq (toString .Values.applications.server.env.HTTPS) "1" }}443{{ else }}80{{ end }}
+      targetPort: {{ if eq (toString .Values.applications.server.env.HTTPS) "1" }}443{{ else }}80{{ end }}
   selector:
     app.kubernetes.io/name: server
 ---
@@ -20,9 +20,9 @@ metadata:
   namespace: {{ .Release.Namespace }}
   name: mysql
 spec:
-  type: {{ .Values.service.mysql.type }}
-  {{- if and (eq .Values.service.mysql.type "LoadBalancer") .Values.service.mysql.loadbalancer.ip }}
-  loadBalancerIP: {{ .Values.service.mysql.loadbalancer.ip }}
+  type: {{ .Values.services.mysql.type }}
+  {{- if and (eq .Values.services.mysql.type "LoadBalancer") .Values.services.mysql.loadbalancer.ip }}
+  loadBalancerIP: {{ .Values.services.mysql.loadbalancer.ip }}
   {{- end }}
   ports:
     - port: 3306
