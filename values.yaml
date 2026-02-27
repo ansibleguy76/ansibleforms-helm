@@ -46,6 +46,7 @@ containers:
   server:
     image: ansibleguy/ansibleforms:6.1.3-rc 
     replicas: 1
+    strategy: "RollingUpdate"
     resources:
       limits:
         cpu: '4'
