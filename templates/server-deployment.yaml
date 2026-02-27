@@ -27,7 +27,7 @@ spec:
       app.kubernetes.io/name: server
 
   strategy:
-    type: {{ $strategy.type | default "RollingUpdate" }}
+    type: {{ $strategy | default "RollingUpdate" }}
 
   template:
     metadata:
