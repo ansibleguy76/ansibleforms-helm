@@ -21,7 +21,7 @@ metadata:
   name: server
   namespace: {{ .Release.Namespace }}
 spec:
-  replicas: {{ $server.replicaCount | default 1 }}
+  replicas: {{ $server.replicas | default 1 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: server
