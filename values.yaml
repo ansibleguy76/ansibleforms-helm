@@ -1,3 +1,7 @@
+# Controls whether or not the chart deploys mysql at all, allowing you to use an external MySQL server
+mysql_deployment:
+  enabled: true
+
 applications:
 
   # MYSQL CONFIGURATION

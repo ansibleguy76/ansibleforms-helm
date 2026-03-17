@@ -1,3 +1,4 @@
+{{- if .Values.mysql_deployment.enabled }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -182,3 +183,4 @@ data:
         `groupfilter` varchar(250) DEFAULT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
 
+{{- end }}

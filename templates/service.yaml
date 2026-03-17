@@ -24,6 +24,7 @@ spec:
   selector:
     app.kubernetes.io/name: server
 ---
+{{- if .Values.mysql_deployment.enabled }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -44,3 +45,4 @@ spec:
       targetPort: 3306
   selector:
     app.kubernetes.io/name: mysql
+{{- end }}
