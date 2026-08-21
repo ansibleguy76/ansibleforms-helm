@@ -1,6 +1,7 @@
 ---
-# HTTPS mode. Render only: binding port 443 needs a capability the pod security
-# context currently drops, so this scenario is not part of the install job.
+# HTTPS mode. Render only: the app needs a certificate to serve TLS itself, and
+# supplying one is outside what the chart sets up, so this is not installed
+# unattended. Binding 443 works now that bindPrivilegedPorts lowers the sysctl.
 applications:
   mysql:
     password: ci-not-a-real-password

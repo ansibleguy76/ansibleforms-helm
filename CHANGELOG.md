@@ -7,6 +7,17 @@ renamed and no value was removed, so an existing release upgrades in place.
 
 ### Fixed
 
+- **The server could not bind its port on a stock cluster.** It listens on 80 or
+  443, both privileged, as an unprivileged user, and a pod network namespace
+  always starts with `net.ipv4.ip_unprivileged_port_start` at 1024 regardless of
+  the node setting. The process died with
+  `listen EACCES: permission denied 0.0.0.0:80` and the pod never came up. It
+  happened to work wherever something else had already lowered that sysctl,
+  which is why it went unnoticed. The chart now sets the sysctl itself, which is
+  on the kubelet's safe list; `containers.server.bindPrivilegedPorts: false`
+  turns it off. Note that adding `NET_BIND_SERVICE` does not fix this: the
+  process is already non-root at exec, so the capability never reaches its
+  effective set.
 - `HTTPS: 1` no longer breaks the render. The value is documented as `0`/`1` and
   people write it unquoted, which YAML reads as a number, while the template ran
   it through `atoi`, which only accepts strings. Only the quoted `"1"` used to

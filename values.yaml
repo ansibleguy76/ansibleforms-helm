@@ -64,6 +64,15 @@ containers:
     # A terminal on a server process is not useful and keeps stdin open.
     stdin: false
     tty: false
+
+    # The app listens on 80 or 443, both privileged, while the container runs
+    # as an unprivileged user. A pod network namespace always starts with
+    # net.ipv4.ip_unprivileged_port_start at 1024, whatever the node says, so
+    # without this the process dies with "listen EACCES: permission denied".
+    # The sysctl is on the kubelet's safe list and allowed under the restricted
+    # pod security standard. Set it to false only if your kubelet refuses the
+    # sysctl, and then serve the app on a port above 1024.
+    bindPrivilegedPorts: true
     resources:
       limits:
         cpu: '4'

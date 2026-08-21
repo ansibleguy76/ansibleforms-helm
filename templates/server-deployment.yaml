@@ -69,6 +69,25 @@ spec:
     spec:
       serviceAccountName: {{ $server.serviceAccountName | default "default" }}
 
+      {{- /*
+        The app listens on 80 or 443. Both are privileged ports, the container
+        runs as an unprivileged user, and a pod network namespace starts with
+        net.ipv4.ip_unprivileged_port_start at 1024 no matter what the node is
+        set to. Adding NET_BIND_SERVICE is not enough either: the process is
+        already non-root at exec, so the capability lands in the bounding set
+        and never reaches the effective one. Lowering the sysctl is what
+        actually works. It has been on the kubelet's safe list since 1.21 and
+        is allowed under the restricted pod security standard.
+        Set bindPrivilegedPorts to false if your kubelet refuses it, and expose
+        the app on a port above 1024 instead.
+      */}}
+      {{- if or (not (hasKey $server "bindPrivilegedPorts")) $server.bindPrivilegedPorts }}
+      securityContext:
+        sysctls:
+          - name: net.ipv4.ip_unprivileged_port_start
+            value: "0"
+      {{- end }}
+
 
       {{- if $server.initContainers }}
       initContainers:
@@ -152,11 +171,21 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: false
             runAsNonRoot: true
-            runAsUser: 1000
-            runAsGroup: 1000
+            runAsUser: {{ $server.runAsUser | default 1000 }}
+            runAsGroup: {{ $server.runAsGroup | default 1000 }}
             capabilities:
               drop:
                 - ALL
+              {{- /*
+                The app listens on 80 or 443, both privileged, while the
+                container runs as an unprivileged user with every capability
+                dropped. Some clusters set net.ipv4.ip_unprivileged_port_start
+                to 0 and it works anyway; the ones that do not just get
+                "listen EACCES: permission denied 0.0.0.0:80" and a pod that
+                never comes up. NET_BIND_SERVICE is the narrow fix.
+              */}}
+              add:
+                - NET_BIND_SERVICE
 
           stdin: {{ if hasKey $server "stdin" }}{{ $server.stdin }}{{ else }}false{{ end }}
           tty: {{ if hasKey $server "tty" }}{{ $server.tty }}{{ else }}false{{ end }}
@@ -166,7 +195,7 @@ spec:
             migrations run on first boot. Without it a slow start looks like a
             hung process and the kubelet restarts the pod in a loop.
           */}}
-          {{- if ne (toString ($startup.enabled | default true)) "false" }}
+          {{- if or (not (hasKey $startup "enabled")) $startup.enabled }}
           startupProbe:
             httpGet:
               path: {{ $startup.path | default $readiness.path | default "/" }}
