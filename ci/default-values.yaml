@@ -37,7 +37,11 @@ ingress:
     enabled: false
 
 storages:
+  # The local-path provisioner that ships with kind only does ReadWriteOnce,
+  # so the install job doubles as a check that this value actually works.
   mysql:
     size: 1Gi
+    accessMode: ReadWriteOnce
   server:
     size: 1Gi
+    accessMode: ReadWriteOnce
