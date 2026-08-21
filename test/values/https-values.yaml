@@ -1,0 +1,19 @@
+---
+# HTTPS mode. Render only: binding port 443 needs a capability the pod security
+# context currently drops, so this scenario is not part of the install job.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 1
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+ingress:
+  enabled: true
+  hostname: ansibleforms.ci.example.com
+  tls:
+    enabled: true

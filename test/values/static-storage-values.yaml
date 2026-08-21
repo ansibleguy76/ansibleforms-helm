@@ -1,0 +1,30 @@
+---
+# Pre-provisioned persistent volumes instead of dynamic provisioning.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+ingress:
+  enabled: true
+  hostname: ansibleforms.ci.example.com
+
+storages:
+  mysql:
+    size: 5Gi
+    static:
+      enabled: true
+      storageClassName: ''
+      volumeName: ansibleforms-mysql-pv
+  server:
+    size: 5Gi
+    static:
+      enabled: true
+      storageClassName: ''
+      volumeName: ansibleforms-server-pv

@@ -1,0 +1,17 @@
+# Patterns to ignore when building packages.
+.DS_Store
+.git/
+.gitignore
+.github/
+.idea/
+.vscode/
+*.swp
+*.bak
+*.tmp
+*.orig
+*~
+ci/
+test/
+ct.yaml
+.yamllint.yaml
+CONTRIBUTING.md

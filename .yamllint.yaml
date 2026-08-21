@@ -1,0 +1,21 @@
+---
+# Helm templates are not valid YAML on their own, so they are linted through
+# the rendered output in CI instead of directly.
+extends: default
+
+ignore: |
+  templates/
+  charts/
+
+rules:
+  line-length: disable
+  comments:
+    min-spaces-from-content: 1
+  comments-indentation: disable
+  truthy:
+    check-keys: false
+  braces:
+    max-spaces-inside: 1
+  document-start: disable
+  indentation:
+    indent-sequences: whatever

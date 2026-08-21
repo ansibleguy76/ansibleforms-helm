@@ -1,0 +1,33 @@
+---
+# Forms, extra forms and custom javascript supplied as external ConfigMaps.
+# Render only, since the referenced ConfigMaps are managed outside the chart.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+ingress:
+  enabled: true
+  hostname: ansibleforms.ci.example.com
+
+forms:
+  configMap:
+    enabled: true
+    key: forms.yaml
+    mountPath: /app/dist/persistent/forms.yaml
+    name: ansibleforms-forms
+  customJs:
+    enabled: true
+    key: custom.js
+    mountPath: /app/dist/src/functions/custom.js
+    name: ansibleforms-custom-js
+  extraFormsConfigMap:
+    enabled: true
+    mountPath: /app/dist/persistent/forms
+    name: ansibleforms-extra-forms

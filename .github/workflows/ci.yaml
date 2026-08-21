@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KUBECONFORM_VERSION: "0.6.7"
+
+jobs:
+  lint:
+    name: Lint and render
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: yamllint
+        run: |
+          pip install --quiet yamllint
+          yamllint --strict .
+
+      - name: helm lint
+        run: |
+          helm lint . --strict
+          for f in ci/*-values.yaml test/values/*-values.yaml; do
+            echo "::group::helm lint with $f"
+            helm lint . --strict --values "$f"
+            echo "::endgroup::"
+          done
+
+      - name: Install kubeconform
+        run: |
+          curl -sSLo /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          tar -xzf /tmp/kubeconform.tar.gz -C /tmp kubeconform
+          sudo install /tmp/kubeconform /usr/local/bin/kubeconform
+          kubeconform -v
+
+      # Rendering against several Kubernetes versions catches removed or renamed
+      # API versions long before anyone upgrades a cluster. The rendered output
+      # is linted too: Helm templates cannot be parsed as YAML directly, so a
+      # duplicated key only shows up once the templates have been expanded.
+      - name: helm template and kubeconform
+        run: |
+          mkdir -p rendered
+          for f in ci/*-values.yaml test/values/*-values.yaml; do
+            name="$(basename "$f" -values.yaml)"
+            for kube in 1.29.0 1.31.0 1.33.0; do
+              echo "::group::$name on Kubernetes $kube"
+              helm template ansibleforms . \
+                --values "$f" \
+                --kube-version "$kube" \
+                > "rendered/${name}-${kube}.yaml"
+              # Only the structural rules matter here. Whitespace and layout are
+              # whatever the templates produced, and ConfigMap payloads legitimately
+              # carry trailing spaces. What this catches is duplicate keys, which is
+              # how a merge once turned one PVC template into two half-merged copies.
+              yamllint --strict -d '{extends: default, rules: {key-duplicates: enable, line-length: disable, empty-lines: disable, indentation: disable, comments: disable, comments-indentation: disable, document-start: disable, truthy: disable, braces: disable, trailing-spaces: disable, new-line-at-end-of-file: disable, empty-values: disable}}' \
+                "rendered/${name}-${kube}.yaml"
+              kubeconform \
+                -strict \
+                -summary \
+                -kubernetes-version "$kube" \
+                -schema-location default \
+                -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+                "rendered/${name}-${kube}.yaml"
+              echo "::endgroup::"
+            done
+          done
+
+      - name: Upload rendered manifests
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-manifests
+          path: rendered/
+          retention-days: 7
+
+  install:
+    name: Install on kind
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: helm/chart-testing-action@v2
+
+      - uses: helm/kind-action@v1
+        with:
+          node_image: kindest/node:v1.31.0
+
+      # ct installs the chart once per ci/*-values.yaml file and waits for every
+      # pod to become ready, so a broken probe or a bad default fails here.
+      - name: ct install
+        run: ct install --config ct.yaml --charts .
+
+      - name: Dump cluster state on failure
+        if: failure()
+        run: |
+          kubectl get pods --all-namespaces
+          kubectl describe pods --all-namespaces
+          kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/name=server --all-namespaces || true
+          kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/name=mysql --all-namespaces || true

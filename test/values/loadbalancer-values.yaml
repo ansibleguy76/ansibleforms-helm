@@ -1,0 +1,22 @@
+---
+# LoadBalancer services without an explicit address, which is the common case
+# with MetalLB or a cloud controller handing out the IP.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+ingress:
+  enabled: false
+
+services:
+  mysql:
+    type: ClusterIP
+  server:
+    type: LoadBalancer

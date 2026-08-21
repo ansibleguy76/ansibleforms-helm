@@ -1,0 +1,10 @@
+# Configuration for helm/chart-testing, used by the install job in CI.
+# The chart lives at the root of the repository, so ct is pointed at "." from
+# the workflow instead of scanning a charts/ directory.
+remote: origin
+target-branch: main
+check-version-increment: false
+validate-maintainers: false
+helm-extra-args: --timeout 900s
+namespace: ""
+release-label: app.kubernetes.io/instance
