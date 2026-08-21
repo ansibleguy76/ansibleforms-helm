@@ -1,0 +1,147 @@
+name: Release chart
+
+# Publishing is driven by the version field in Chart.yaml. Bump it in a pull
+# request, merge to main, and this workflow tags the release, attaches the
+# packaged chart, pushes it to GHCR as an OCI artifact and refreshes the Helm
+# repository index served from GitHub Pages.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - Chart.yaml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-chart
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Package and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+    outputs:
+      released: ${{ steps.check.outputs.released }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - name: Read chart version
+        id: chart
+        run: |
+          version="$(helm show chart . | awk '/^version:/ {print $2}')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Chart version is $version"
+
+      - name: Skip if the tag already exists
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.chart.outputs.version }}
+        run: |
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            echo "Release v${VERSION} already exists, nothing to do."
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Package
+        if: steps.check.outputs.released == 'true'
+        run: helm package . --destination dist
+
+      - name: Create GitHub release
+        if: steps.check.outputs.released == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.chart.outputs.version }}
+        run: |
+          gh release create "v${VERSION}" \
+            --title "ansibleforms ${VERSION}" \
+            --generate-notes \
+            "dist/ansibleforms-${VERSION}.tgz"
+
+      # The automatic GITHUB_TOKEN is enough to push to GHCR as long as the job
+      # asks for packages: write, so no personal access token is needed here.
+      # The package is created private; making it public is a one time setting
+      # on the package page after this first push.
+      - name: Push to GHCR
+        if: steps.check.outputs.released == 'true'
+        env:
+          VERSION: ${{ steps.chart.outputs.version }}
+        run: |
+          owner="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
+          helm registry login ghcr.io \
+            --username '${{ github.actor }}' \
+            --password '${{ github.token }}'
+          helm push "dist/ansibleforms-${VERSION}.tgz" "oci://ghcr.io/${owner}/charts"
+
+  pages:
+    name: Publish Helm repository
+    needs: release
+    if: needs.release.outputs.released == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - uses: actions/configure-pages@v5
+        id: pages
+
+      # The index is rebuilt from every published release rather than kept as
+      # state in a branch, so the site can always be regenerated from scratch.
+      - name: Rebuild the repository index
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PAGE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          mkdir -p public
+          for tag in $(gh release list --limit 200 --json tagName --jq '.[].tagName'); do
+            gh release download "$tag" --dir public --pattern '*.tgz' --clobber || true
+          done
+          ls -la public
+          helm repo index public --url "${PAGE_URL}/"
+
+      - name: Write a landing page
+        env:
+          PAGE_URL: ${{ steps.pages.outputs.base_url }}
+        run: |
+          cat > public/index.html <<EOF
+          <!doctype html>
+          <meta charset="utf-8">
+          <title>AnsibleForms Helm charts</title>
+          <h1>AnsibleForms Helm charts</h1>
+          <p>Add this repository with:</p>
+          <pre>helm repo add ansibleforms ${PAGE_URL}/
+          helm repo update
+          helm search repo ansibleforms</pre>
+          <p>Or pull the chart straight from the OCI registry:</p>
+          <pre>helm pull oci://ghcr.io/${{ github.repository_owner }}/charts/ansibleforms</pre>
+          <p><a href="index.yaml">index.yaml</a></p>
+          EOF
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+      - uses: actions/deploy-pages@v4
+        id: deploy
