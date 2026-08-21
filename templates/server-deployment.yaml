@@ -5,14 +5,30 @@
 {{- $liveness := ($server.liveness | default dict) }}
 {{- $readiness := ($server.readiness | default dict) }}
 {{- $resources := ($server.resources | default dict) }}
-{{- $strategy := ($server.strategy | default dict) }}
+{{- $startup := ($server.startup | default dict) }}
+{{- /*
+  strategy accepts either a plain string ("Recreate") or the Kubernetes shape
+  ({type: Recreate}). Without this the map form used to render as
+  "type: map[type:Recreate]".
+*/}}
+{{- $strategyType := "RollingUpdate" }}
+{{- if kindIs "string" $server.strategy }}
+  {{- $strategyType = $server.strategy }}
+{{- else if kindIs "map" $server.strategy }}
+  {{- $strategyType = (dig "type" "RollingUpdate" $server.strategy) }}
+{{- end }}
 {{- $limits := ($resources.limits | default dict) }}
 {{- $requests := ($resources.requests | default dict) }}
 {{- $appServer := ($app.server | default dict) }}
 {{- $appEnv := ($appServer.env | default dict) }}
 {{- $appMysql := ($app.mysql | default dict) }}
 {{- $cmd := ($server.customCommand | default dict) }}
-{{- $https := eq (atoi (default "0" $appEnv.HTTPS)) 1 }}
+{{- /*
+  HTTPS is documented as 0/1 and people write it unquoted, which makes it a
+  number in YAML. atoi only accepts strings, so the unquoted form used to fail
+  the render outright. toString takes both.
+*/}}
+{{- $https := eq (toString ($appEnv.HTTPS | default "0")) "1" }}
 {{- $sensitive := dict "ENCRYPTION_SECRET" true "ADMIN_USERNAME" true "ADMIN_PASSWORD" true }}
 
 apiVersion: apps/v1
@@ -20,19 +36,36 @@ kind: Deployment
 metadata:
   name: server
   namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/name: server
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    {{- if .Chart.AppVersion }}
+    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+    {{- end }}
 spec:
   replicas: {{ $server.replicas | default 1 }}
+  {{- /* The selector is immutable on an existing Deployment, leave it alone */}}
   selector:
     matchLabels:
       app.kubernetes.io/name: server
 
   strategy:
-    type: {{ $strategy | default "RollingUpdate" }}
+    type: {{ $strategyType }}
 
   template:
     metadata:
       labels:
         app.kubernetes.io/name: server
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        app.kubernetes.io/component: server
+        app.kubernetes.io/part-of: {{ .Release.Name }}
+      {{- with $server.podAnnotations }}
+      annotations:
+{{ toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       serviceAccountName: {{ $server.serviceAccountName | default "default" }}
 
@@ -125,8 +158,25 @@ spec:
               drop:
                 - ALL
 
-          stdin: {{ $server.stdin | default true }}
-          tty: {{ $server.tty | default true }}
+          stdin: {{ if hasKey $server "stdin" }}{{ $server.stdin }}{{ else }}false{{ end }}
+          tty: {{ if hasKey $server "tty" }}{{ $server.tty }}{{ else }}false{{ end }}
+
+          {{- /*
+            The startup probe holds the liveness probe back while the database
+            migrations run on first boot. Without it a slow start looks like a
+            hung process and the kubelet restarts the pod in a loop.
+          */}}
+          {{- if ne (toString ($startup.enabled | default true)) "false" }}
+          startupProbe:
+            httpGet:
+              path: {{ $startup.path | default $readiness.path | default "/" }}
+              port: {{ if $https }}443{{ else }}80{{ end }}
+              scheme: {{ if $https }}HTTPS{{ else }}HTTP{{ end }}
+            initialDelaySeconds: {{ $startup.initialDelaySeconds | default 10 }}
+            periodSeconds: {{ $startup.periodSeconds | default 10 }}
+            timeoutSeconds: {{ $startup.timeoutSeconds | default 5 }}
+            failureThreshold: {{ $startup.failureThreshold | default 30 }}
+          {{- end }}
 
           livenessProbe:
             httpGet:
@@ -136,6 +186,7 @@ spec:
             initialDelaySeconds: {{ $liveness.initialDelaySeconds | default 15 }}
             periodSeconds: {{ $liveness.periodSeconds | default 15 }}
             timeoutSeconds: {{ $liveness.timeoutSeconds | default 15 }}
+            failureThreshold: {{ $liveness.failureThreshold | default 3 }}
 
           readinessProbe:
             httpGet:
@@ -145,6 +196,7 @@ spec:
             initialDelaySeconds: {{ $readiness.initialDelaySeconds | default 15 }}
             periodSeconds: {{ $readiness.periodSeconds | default 15 }}
             timeoutSeconds: {{ $readiness.timeoutSeconds | default 15 }}
+            failureThreshold: {{ $readiness.failureThreshold | default 3 }}
 
           volumeMounts:
             - mountPath: /app/dist/persistent
