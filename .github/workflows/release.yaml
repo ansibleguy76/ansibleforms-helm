@@ -88,7 +88,12 @@ jobs:
   pages:
     name: Publish Helm repository
     needs: release
-    if: needs.release.outputs.released == 'true'
+    # Also runs on a manual dispatch even when there is no new version, so the
+    # index can be rebuilt on its own. Without that, a release whose Pages job
+    # failed (say, because the Pages source had not been set yet) could never be
+    # republished: the retry would find the tag already there, decide there was
+    # nothing to release, and skip this job until the next version bump.
+    if: needs.release.outputs.released == 'true' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
