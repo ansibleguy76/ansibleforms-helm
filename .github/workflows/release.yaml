@@ -109,8 +109,13 @@ jobs:
         with:
           version: v3.16.2
 
+      # enablement turns Pages on through the API using the automatic
+      # GITHUB_TOKEN, so nobody has to visit the repository settings first. It
+      # is a no-op once Pages is already configured.
       - uses: actions/configure-pages@v5
         id: pages
+        with:
+          enablement: true
 
       # The index is rebuilt from every published release rather than kept as
       # state in a branch, so the site can always be regenerated from scratch.
