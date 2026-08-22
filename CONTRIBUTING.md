@@ -46,8 +46,15 @@ the steps an operator has to take.
 ## Repository settings this depends on
 
 The release workflow needs no secrets, the automatic `GITHUB_TOKEN` covers both
-the GitHub release and the push to GHCR. Two things are owner-only, though:
+the GitHub release and the push to GHCR.
 
-- **Settings > Pages**, source set to *GitHub Actions*, for the Helm repository.
-- The **package visibility** on the GHCR package, which GitHub creates private.
-  It can only be changed after the first push, from the package page.
+One thing is owner-only: **Settings > Pages**, source set to *GitHub Actions*.
+Without it the Helm repository is not published; the release and the OCI
+artifact still are, and the workflow says so in its run summary rather than
+failing. Enabling Pages from the workflow itself does not work, creating the
+site needs repository administration rights that the automatic token does not
+have, whatever permissions the job requests.
+
+The GHCR package needs nothing. Pushed from Actions it is linked to the
+repository and inherits its visibility, so on a public repository it can be
+pulled anonymously right after the first release.

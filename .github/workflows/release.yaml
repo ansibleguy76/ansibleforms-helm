@@ -72,8 +72,9 @@ jobs:
 
       # The automatic GITHUB_TOKEN is enough to push to GHCR as long as the job
       # asks for packages: write, so no personal access token is needed here.
-      # The package is created private; making it public is a one time setting
-      # on the package page after this first push.
+      # A package pushed this way is linked to the repository and inherits its
+      # visibility, so on a public repository it is publicly pullable straight
+      # away with no visit to the package settings.
       - name: Push to GHCR
         if: steps.check.outputs.released == 'true'
         env:
@@ -109,17 +110,39 @@ jobs:
         with:
           version: v3.16.2
 
-      # enablement turns Pages on through the API using the automatic
-      # GITHUB_TOKEN, so nobody has to visit the repository settings first. It
-      # is a no-op once Pages is already configured.
+      # Do not bother with the action's `enablement` flag. Creating a Pages site
+      # needs repository administration rights, which the automatic token does
+      # not have however many permissions the job asks for, and it fails with
+      # "Resource not accessible by integration". Turning Pages on is a manual
+      # step for whoever owns the repository, once.
+      #
+      # Until then this job steps aside instead of failing the release: the
+      # GitHub release and the OCI artifact are published either way, and a
+      # permanently red pipeline just teaches everyone to ignore it.
       - uses: actions/configure-pages@v5
         id: pages
-        with:
-          enablement: true
+        continue-on-error: true
+
+      - name: Explain what is missing
+        if: steps.pages.outcome == 'failure'
+        run: |
+          {
+            echo "### Helm repository not published"
+            echo
+            echo "The chart is released and pushed to GHCR, but the Helm"
+            echo "repository index was skipped because GitHub Pages is not"
+            echo "set up on this repository."
+            echo
+            echo "To enable it, an administrator has to open **Settings >"
+            echo "Pages** once and set the source to **GitHub Actions**, then"
+            echo "re-run this workflow. Nothing else is needed, and no secret"
+            echo "is involved."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       # The index is rebuilt from every published release rather than kept as
       # state in a branch, so the site can always be regenerated from scratch.
       - name: Rebuild the repository index
+        if: steps.pages.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
           PAGE_URL: ${{ steps.pages.outputs.base_url }}
@@ -132,6 +155,7 @@ jobs:
           helm repo index public --url "${PAGE_URL}/"
 
       - name: Write a landing page
+        if: steps.pages.outcome == 'success'
         env:
           PAGE_URL: ${{ steps.pages.outputs.base_url }}
         run: |
@@ -150,8 +174,10 @@ jobs:
           EOF
 
       - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outcome == 'success'
         with:
           path: public
 
       - uses: actions/deploy-pages@v4
+        if: steps.pages.outcome == 'success'
         id: deploy
