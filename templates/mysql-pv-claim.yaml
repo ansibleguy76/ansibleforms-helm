@@ -1,19 +1,6 @@
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  namespace: {{ .Release.Namespace }}
-  name: {{ .Release.Name }}-mysql-pvc
-  labels:
-   app.kubernetes.io/name: mysql
-   app.kubernetes.io/instance: mysql
-   app.kubernetes.io/component: mysql
-   app.kubernetes.io/part-of: {{ .Release.Name }}
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: {{ .Values.storages.mysql.size }}
+{{- /* Normalise values so a missing key does not blow up the render */}}
+{{- $mysql := .Values.storages.mysql | default dict -}}
+{{- $static := $mysql.static | default dict -}}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -22,32 +9,28 @@ metadata:
   labels:
     app.kubernetes.io/name: mysql
     app.kubernetes.io/instance: mysql
-    app.kubernetes.io/component: mysql
+    app.kubernetes.io/component: database
     app.kubernetes.io/part-of: {{ .Release.Name }}
 spec:
   accessModes:
-    - ReadWriteMany
+    - {{ $mysql.accessMode | default "ReadWriteMany" }}
   resources:
     requests:
-      storage: {{ .Values.storages.mysql.size }}
-
-  {{- /* Normalizamos valores para evitar nil pointer */}}
-  {{- $mysql := .Values.storages.mysql | default dict -}}
-  {{- $static := $mysql.static | default dict -}}
+      storage: {{ $mysql.size | default "10Gi" }}
 
   {{- if $static.enabled }}
 
-  {{- /* MODO PV ESTÁTICO: se espera que exista un PV con ese nombre */}}
+  {{- /* Static volume: a PersistentVolume with this name is expected to exist */}}
   {{- if $static.storageClassName }}
   storageClassName: {{ $static.storageClassName }}
   {{- else }}
-  storageClassName: ""        # patrón típico para PV estático sin StorageClass
+  storageClassName: ""
   {{- end }}
   volumeName: {{ default (printf "%s-mysql-pv" .Release.Name) $static.volumeName }}
 
   {{- else }}
 
-  {{- /* MODO DINÁMICO: usamos StorageClass (Longhorn, NFS-CSI, etc.) */}}
+  {{- /* Dynamic provisioning through a StorageClass (Longhorn, NFS CSI, ...) */}}
   {{- if $mysql.className }}
   storageClassName: {{ $mysql.className }}
   {{- end }}

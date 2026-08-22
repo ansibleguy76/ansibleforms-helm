@@ -1,3 +1,6 @@
+{{- /* Normalise values so a missing key does not blow up the render */}}
+{{- $server := .Values.storages.server | default dict -}}
+{{- $static := $server.static | default dict -}}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -10,15 +13,14 @@ metadata:
     app.kubernetes.io/part-of: {{ .Release.Name }}
 spec:
   accessModes:
-    - ReadWriteMany
+    - {{ $server.accessMode | default "ReadWriteMany" }}
   resources:
     requests:
-      storage: {{ .Values.storages.server.size }}
-  {{- $server := .Values.storages.server | default dict -}}
-  {{- $static := $server.static | default dict -}}
+      storage: {{ $server.size | default "10Gi" }}
 
   {{- if $static.enabled }}
 
+  {{- /* Static volume: a PersistentVolume with this name is expected to exist */}}
   {{- if $static.storageClassName }}
   storageClassName: {{ $static.storageClassName }}
   {{- else }}
@@ -28,6 +30,7 @@ spec:
 
   {{- else }}
 
+  {{- /* Dynamic provisioning through a StorageClass (Longhorn, NFS CSI, ...) */}}
   {{- if $server.className }}
   storageClassName: {{ $server.className }}
   {{- end }}

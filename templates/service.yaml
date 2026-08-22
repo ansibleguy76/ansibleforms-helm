@@ -1,16 +1,26 @@
+{{- $https := eq (toString .Values.applications.server.env.HTTPS) "1" }}
+{{- $serverSvc := .Values.services.server | default dict }}
+{{- $serverLb := $serverSvc.loadbalancer | default dict }}
+{{- $mysqlSvc := .Values.services.mysql | default dict }}
+{{- $mysqlLb := $mysqlSvc.loadbalancer | default dict }}
 apiVersion: v1
 kind: Service
 metadata:
   namespace: {{ .Release.Namespace }}
   name: server
+  labels:
+    app.kubernetes.io/name: server
+    app.kubernetes.io/instance: server
+    app.kubernetes.io/component: server
+    app.kubernetes.io/part-of: {{ .Release.Name }}
 spec:
-  type: {{ .Values.services.server.type }}
-  {{- if and (eq .Values.services.server.type "LoadBalancer") .Values.services.server.loadbalancer.ip }}
-  loadBalancerIP: {{ .Values.services.server.loadbalancer.ip }}
+  type: {{ $serverSvc.type | default "ClusterIP" }}
+  {{- if and (eq ($serverSvc.type | default "ClusterIP") "LoadBalancer") $serverLb.ip }}
+  loadBalancerIP: {{ $serverLb.ip }}
   {{- end }}
   ports:
-    - port: {{ if eq (toString .Values.applications.server.env.HTTPS) "1" }}443{{ else }}80{{ end }}
-      targetPort: {{ if eq (toString .Values.applications.server.env.HTTPS) "1" }}443{{ else }}80{{ end }}
+    - port: {{ if $https }}443{{ else }}80{{ end }}
+      targetPort: {{ if $https }}443{{ else }}80{{ end }}
   selector:
     app.kubernetes.io/name: server
 ---
@@ -19,10 +29,15 @@ kind: Service
 metadata:
   namespace: {{ .Release.Namespace }}
   name: mysql
+  labels:
+    app.kubernetes.io/name: mysql
+    app.kubernetes.io/instance: mysql
+    app.kubernetes.io/component: database
+    app.kubernetes.io/part-of: {{ .Release.Name }}
 spec:
-  type: {{ .Values.services.mysql.type }}
-  {{- if and (eq .Values.services.mysql.type "LoadBalancer") .Values.services.mysql.loadbalancer.ip }}
-  loadBalancerIP: {{ .Values.services.mysql.loadbalancer.ip }}
+  type: {{ $mysqlSvc.type | default "ClusterIP" }}
+  {{- if and (eq ($mysqlSvc.type | default "ClusterIP") "LoadBalancer") $mysqlLb.ip }}
+  loadBalancerIP: {{ $mysqlLb.ip }}
   {{- end }}
   ports:
     - port: 3306

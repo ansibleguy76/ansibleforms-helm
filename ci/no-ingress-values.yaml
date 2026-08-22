@@ -1,0 +1,44 @@
+---
+# Same as the baseline but without an ingress, which is how the chart is used
+# behind an external proxy or when the service is exposed some other way.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  mysql:
+    resources:
+      limits:
+        cpu: '1'
+        memory: 1024Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+  server:
+    resources:
+      limits:
+        cpu: '1'
+        memory: 1024Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+ingress:
+  enabled: false
+
+storages:
+  # The local-path provisioner that ships with kind only does ReadWriteOnce,
+  # so the install job doubles as a check that this value actually works.
+  mysql:
+    size: 1Gi
+    accessMode: ReadWriteOnce
+  server:
+    size: 1Gi
+    accessMode: ReadWriteOnce

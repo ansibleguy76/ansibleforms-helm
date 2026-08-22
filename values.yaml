@@ -17,10 +17,10 @@ applications:
       ENCRYPTION_SECRET: <ENTER_SECRET_HERE>
 
       # -------- EXTRA ENV VARIABLES FOR SERVER --------
-      
+
       # ******** IGNORE PRIVATE CA CERTS ********
       # NODE_TLS_REJECT_UNAUTHORIZED: 0
-      
+
       # ******** ENABLE THIS FOR PRIVATE CA CERTS ********
       # NODE_EXTRA_CA_CERTS: /etc/custom-certs/custom-ca.crt
 
@@ -32,7 +32,11 @@ containers:
 # ~~~~
 
   mysql:
-    image: mysql:latest # mysql:latest
+    # Pinned on purpose. A floating tag means an unattended major upgrade the
+    # next time the pod is rescheduled, and MySQL does not support downgrades,
+    # so a rollback would leave the data directory unreadable.
+    # Already running a 9.x image? Set this to your current tag before upgrading.
+    image: mysql:8.4
     resources:
       limits:
         cpu: '2'
@@ -40,13 +44,35 @@ containers:
       requests:
         cpu: '0.5'
         memory: 512Mi
-        
+
 # ~~~~
 
   server:
-    image: ansibleguy/ansibleforms:6.1.3-rc 
+    image: ansibleguy/ansibleforms:6.2.1
     replicas: 1
+
+    # Accepts either "Recreate" / "RollingUpdate" or the Kubernetes shape
+    # ({type: Recreate}). Recreate is the safer choice here: the server and the
+    # persistent volume are shared, so two pods alive at once means two
+    # schedulers and two seed runs against the same database.
     strategy: "RollingUpdate"
+
+    # Written into the pod template, so changing them triggers a rollout. Handy
+    # for a checksum annotation when the forms ConfigMap changes.
+    podAnnotations: {}
+
+    # A terminal on a server process is not useful and keeps stdin open.
+    stdin: false
+    tty: false
+
+    # The app listens on 80 or 443, both privileged, while the container runs
+    # as an unprivileged user. A pod network namespace always starts with
+    # net.ipv4.ip_unprivileged_port_start at 1024, whatever the node says, so
+    # without this the process dies with "listen EACCES: permission denied".
+    # The sysctl is on the kubelet's safe list and allowed under the restricted
+    # pod security standard. Set it to false only if your kubelet refuses the
+    # sysctl, and then serve the app on a port above 1024.
+    bindPrivilegedPorts: true
     resources:
       limits:
         cpu: '4'
@@ -56,7 +82,7 @@ containers:
         memory: 1024Mi
     initContainers:
       - name: prepare-persistent-volume
-        image: ansibleguy/ansibleforms:6.1.3-rc 
+        image: ansibleguy/ansibleforms:6.2.1
         imagePullPolicy: IfNotPresent
         # This command changes the ownership of the specified directory.
         command: ["sh", "-c", "chown -R 1000:1000 /app/dist/persistent"]
@@ -71,16 +97,30 @@ containers:
   # LIVENESS / READINESS CONFIGURATION
   # ------------------------------------------------------------------------------
 
+    # The startup probe covers the first boot, when the database migrations run
+    # and the app can take minutes to answer. Until it succeeds the liveness
+    # probe is not evaluated, which is what stops the restart loop people hit on
+    # a fresh install. failureThreshold x periodSeconds is the budget, 300s here.
+    startup:
+      enabled: true
+      path: /
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+
     liveness:
       path: /
       initialDelaySeconds: 15
       periodSeconds: 15
       timeoutSeconds: 15
+      failureThreshold: 3
     readiness:
       path: /
       initialDelaySeconds: 15
       periodSeconds: 15
       timeoutSeconds: 15
+      failureThreshold: 3
 
   # ---------------------------------------------------
   # ENABLE THIS FOR CUSTOM COMMANDS
@@ -98,7 +138,7 @@ containers:
     #     mountPath: /etc/custom-certs/custom-ca.crt
     #     subPath: custom-ca.crt
     #     readOnly: true
-            
+
 # ~~~~
 
 
@@ -153,7 +193,7 @@ services:
   server:
     type: ClusterIP
 # ~~~~
-    
+
 # ------------------------------------------------------------------------------
 # STORAGE CONFIGURATION
 # ------------------------------------------------------------------------------
@@ -163,6 +203,9 @@ storages:
   mysql:
     className: ''
     size: 10Gi
+    # ReadWriteMany is the default the chart has always used. Plenty of storage
+    # classes only offer ReadWriteOnce, and with a single replica that is fine.
+    accessMode: ReadWriteMany
     static:
       enabled: false
       storageClassName: ''
@@ -171,6 +214,7 @@ storages:
   server:
     className: ''
     size: 10Gi
+    accessMode: ReadWriteMany
     static:
       enabled: false
       storageClassName: ''

@@ -1,0 +1,20 @@
+---
+# HTTPS mode. Render only: the app needs a certificate to serve TLS itself, and
+# supplying one is outside what the chart sets up, so this is not installed
+# unattended. Binding 443 works now that bindPrivilegedPorts lowers the sysctl.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 1
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+ingress:
+  enabled: true
+  hostname: ansibleforms.ci.example.com
+  tls:
+    enabled: true

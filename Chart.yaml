@@ -1,4 +1,28 @@
 apiVersion: v2
 name: ansibleforms
-version: 6.1.3 # Matching the release version.
-description: A Helm chart for AnsibleForms environment
+description: A Helm chart for AnsibleForms, a web front end that turns Ansible playbooks into forms
+type: application
+
+# version is the chart version and is what drives a release. appVersion is the
+# AnsibleForms version the default image points at. They used to be kept in
+# lockstep, which stopped being true as soon as the chart needed a fix of its
+# own, so they are tracked separately from here on.
+version: 6.2.0
+appVersion: "6.2.1"
+
+home: https://ansibleforms.com
+icon: https://raw.githubusercontent.com/ansibleguy76/ansibleforms/main/docs/assets/images/logo.png
+sources:
+  - https://github.com/ansibleguy76/ansibleforms-helm
+  - https://github.com/ansibleguy76/ansibleforms
+
+keywords:
+  - ansible
+  - ansibleforms
+  - automation
+  - forms
+  - self-service
+
+maintainers:
+  - name: ansibleguy76
+    url: https://github.com/ansibleguy76

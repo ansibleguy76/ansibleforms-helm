@@ -13,9 +13,37 @@ This Helm chart deploys the AnsibleForms application and its MySQL database on K
 - Service type (ClusterIP, LoadBalancer, NodePort) is configurable, with support for static LoadBalancer IPs
 - (Optional) Support for managing `forms.yaml`, `forms/*.yaml` definitions, and `custom.js` via ConfigMaps
 
+## Installing
+
+From the chart repository:
+
+```bash
+helm repo add ansibleforms https://ansibleguy76.github.io/ansibleforms-helm/
+helm repo update
+helm show values ansibleforms/ansibleforms > my_values.yaml
+# edit my_values.yaml, then
+helm upgrade --install ansibleforms ansibleforms/ansibleforms \
+  --namespace ansibleforms --create-namespace \
+  --values my_values.yaml
+```
+
+Or straight from the OCI registry, no repository to add:
+
+```bash
+helm show values oci://ghcr.io/ansibleguy76/charts/ansibleforms > my_values.yaml
+helm upgrade --install ansibleforms oci://ghcr.io/ansibleguy76/charts/ansibleforms \
+  --namespace ansibleforms --create-namespace \
+  --values my_values.yaml
+```
+
+Pin the chart version in anything that runs unattended, for example
+`--version 6.2.0`, so a new release never lands on its own.
+
 ## Usage
 
 ### 1. Clone the Helm chart and values.yaml
+
+Only needed if you want to work on the chart itself rather than install it.
 
 ```bash
 git clone https://github.com/ansibleguy76/ansibleforms-helm
@@ -29,13 +57,13 @@ Update the `my_values.yaml` to your taste.
 #### Minimalistic example without ingress (dynamic storage with a StorageClass)
 
 ```yaml
-application:
+applications:
   server:
     env:
       HTTPS: 1 # auto sets port to 443
       ENCRYPTION_SECRET: "Abc123Abc123Abc123Abc123Abc123Abc1" # optional but recommended, 32 chars random string
 
-storage:
+storages:
   server:
     className: longhorn   # example dynamic StorageClass
     size: 5Gi
@@ -43,7 +71,7 @@ storage:
     className: longhorn
     size: 5Gi
 
-service:
+services:
   server:
     type: LoadBalancer
     loadbalancer:
@@ -53,7 +81,7 @@ service:
 #### Extended example with ingress
 
 ```yaml
-application:
+applications:
   server:
     env:
       HTTPS: 0 # auto sets ports on 80 or 443
@@ -65,7 +93,7 @@ application:
     user: root
     password: MyDbPassword1!!
 
-storage:
+storages:
   server:
     className: nfs-csi       # just an example storage provider
     size: 1Gi
@@ -73,9 +101,9 @@ storage:
     className: nfs-csi-nomap # just an example storage provider
     size: 1Gi
 
-container:
+containers:
   server:
-    image: ansibleguy/ansibleforms:betav6
+    image: ansibleguy/ansibleforms:6.2.1
     resources:
       limits:
         cpu: "0.5"
@@ -84,7 +112,7 @@ container:
         cpu: "0.25"
         memory: 256Mi
   mysql:
-    image: mysql:latest
+    image: mysql:8.4
     resources:
       limits:
         cpu: "0.5"
@@ -93,7 +121,7 @@ container:
         cpu: "0.25"
         memory: 256Mi
 
-service:
+services:
   server:
     type: ClusterIP # service is exposed with ingress
   mysql:
@@ -129,7 +157,7 @@ The chart supports two storage modes for both `server` and `mysql`:
 Dynamic provisioning is the default mode. You typically configure:
 
 ```yaml
-storage:
+storages:
   server:
     className: longhorn   # or any other existing StorageClass
     size: 5Gi
@@ -142,7 +170,7 @@ storage:
       enabled: false
 ```
 
-- If `storage.<component>.className` is set, the PVC will use that StorageClass.
+- If `storages.<component>.className` is set, the PVC will use that StorageClass.
 - If `className` is omitted, the cluster's **default StorageClass** (if any) will be used.
 - `static.enabled: false` (default) means **no `volumeName` is set**, so the cluster can bind the PVC to dynamically provisioned PVs.
 
@@ -172,7 +200,7 @@ spec:
 Then configure the chart to use it:
 
 ```yaml
-storage:
+storages:
   mysql:
     size: 5Gi
     static:
@@ -190,7 +218,7 @@ When `static.enabled: true`:
 You can configure the same pattern for the `server` volume:
 
 ```yaml
-storage:
+storages:
   server:
     size: 5Gi
     static:
