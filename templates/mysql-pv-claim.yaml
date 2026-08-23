@@ -1,4 +1,4 @@
-{{- if .Values.mysql_deployment.enabled }}
+{{- if dig "enabled" true (.Values.mysql | default dict) }}
 {{- /* Normalise values so a missing key does not blow up the render */}}
 {{- $mysql := .Values.storages.mysql | default dict -}}
 {{- $static := $mysql.static | default dict -}}

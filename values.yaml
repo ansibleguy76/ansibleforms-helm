@@ -1,13 +1,27 @@
-# Controls whether or not the chart deploys mysql at all, allowing you to use an external MySQL server
-mysql_deployment:
+# ------------------------------------------------------------------------------
+# MYSQL DEPLOYMENT
+# ------------------------------------------------------------------------------
+# Whether the chart deploys its own MySQL. Turn it off to point AnsibleForms at
+# a database you already run, and set applications.mysql.host and .port below to
+# reach it. The Deployment, Service, PVC and the two ConfigMaps are then all
+# skipped, so nothing has to be cleaned up afterwards.
+#
+# Careful with an existing release: disabling this deletes the MySQL PVC and,
+# with a reclaim policy of Delete, the data along with it. Take a dump first.
+mysql:
   enabled: true
 
 applications:
 
   # MYSQL CONFIGURATION
+  # user and password are the credentials AnsibleForms connects with, whether
+  # the database is the bundled one or your own. Leave password out entirely if
+  # you supply the credentials through secrets.existingSecret further down.
   mysql:
     password: <ENTER_PASSWORD_HERE>
     user: root
+    # Defaults to the bundled service on "mysql":3306. Point these at your own
+    # server when mysql.enabled is false.
     # host: "mysql"
     # port: "3306"
 
@@ -127,6 +141,28 @@ containers:
       failureThreshold: 3
 
   # ---------------------------------------------------
+  # EXTRA ENVIRONMENT
+  # ---------------------------------------------------
+  # Plain Kubernetes env entries, for anything applications.server.env cannot
+  # express: a value read from another Secret or ConfigMap, or from the
+  # downward API. Written after the generated variables, so it wins.
+    extraEnv: []
+    #   - name: ENV
+    #     value: production
+    #   - name: SOME_TOKEN
+    #     valueFrom:
+    #       secretKeyRef:
+    #         name: my-other-secret
+    #         key: token
+
+  # Whole ConfigMaps or Secrets injected as environment at once.
+    extraEnvFrom: []
+    #   - configMapRef:
+    #       name: ansibleforms-extra-config
+    #   - secretRef:
+    #       name: ansibleforms-extra-secrets
+
+  # ---------------------------------------------------
   # ENABLE THIS FOR CUSTOM COMMANDS
   # ---------------------------------------------------
     # customCommand:
@@ -165,6 +201,23 @@ forms:
     enabled: false
     mountPath: /app/dist/persistent/forms
     name: ''
+
+# ------------------------------------------------------------------------------
+# SECRETS
+# ------------------------------------------------------------------------------
+# By default the chart creates a Secret named <release>-secrets from the values
+# above. Point existingSecret at a Secret you manage instead, and the chart will
+# not create or touch one: use it with External Secrets, Sealed Secrets, SOPS,
+# or anything else that puts credentials in the cluster without them passing
+# through values.yaml.
+#
+# The Secret must carry these five keys:
+#   DB_USER, DB_PASSWORD, ENCRYPTION_SECRET, ADMIN_USERNAME, ADMIN_PASSWORD
+#
+# applications.mysql.password and the sensitive entries under
+# applications.server.env can then be left out entirely.
+secrets:
+  existingSecret: ''
 
 # ------------------------------------------------------------------------------
 # INGRESS CONFIGURATION

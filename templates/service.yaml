@@ -23,8 +23,10 @@ spec:
       targetPort: {{ if $https }}443{{ else }}80{{ end }}
   selector:
     app.kubernetes.io/name: server
+{{- /* The separator goes inside the guard, or disabling MySQL leaves a stray
+       document marker at the end of the file. */}}
+{{- if dig "enabled" true (.Values.mysql | default dict) }}
 ---
-{{- if .Values.mysql_deployment.enabled }}
 apiVersion: v1
 kind: Service
 metadata:

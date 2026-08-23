@@ -1,4 +1,4 @@
-{{- if .Values.mysql_deployment.enabled }}
+{{- if dig "enabled" true (.Values.mysql | default dict) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
