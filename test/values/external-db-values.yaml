@@ -1,0 +1,26 @@
+---
+# Bring your own database: the chart deploys no MySQL at all and AnsibleForms
+# talks to a server that already exists.
+mysql:
+  enabled: false
+
+applications:
+  mysql:
+    user: ansibleforms
+    password: ci-not-a-real-password
+    host: mysql.databases.svc.cluster.local
+    port: "3306"
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+ingress:
+  enabled: false
+
+storages:
+  server:
+    size: 1Gi
+    accessMode: ReadWriteOnce

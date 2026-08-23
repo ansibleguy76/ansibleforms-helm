@@ -381,8 +381,77 @@ Depending on your environment, choose an existing namespace or choose to create 
 helm install ansibleforms ./ansibleforms-helm -f ./my_values.yaml -n ansibleforms --create-namespace
 ```
 
+### 6. Credentials from a Secret you already manage
+
+By default the chart builds a Secret named `<release>-secrets` out of the
+passwords in your values file. Point `secrets.existingSecret` at a Secret you
+manage instead and the chart creates none, which is what you want with External
+Secrets, Sealed Secrets, SOPS or a Vault sidecar:
+
+```yaml
+secrets:
+  existingSecret: ansibleforms-credentials
+```
+
+The Secret has to carry these five keys:
+
+| Key | |
+|---|---|
+| `DB_USER` | database user |
+| `DB_PASSWORD` | database password, also used by the bundled MySQL as its root password |
+| `ENCRYPTION_SECRET` | encrypts credentials stored inside AnsibleForms |
+| `ADMIN_USERNAME` | local admin account |
+| `ADMIN_PASSWORD` | local admin password |
+
+With this set you can drop `applications.mysql.password` and the sensitive
+entries under `applications.server.env` from your values entirely.
+
+Worth knowing if you manage that Secret yourself: the name the chart generates
+is `<release>-secrets`, which is very often the same name people give theirs. If
+you do not set `existingSecret`, the chart will happily create its own Secret
+under that name and overwrite yours on the next sync. Since 6.2.1 it at least
+refuses to write the placeholder passwords from `values.yaml` into it.
+
+### 7. Using a database the chart does not manage
+
+Set `mysql.enabled: false` and no MySQL Deployment, Service, PVC or ConfigMap is
+created. Point AnsibleForms at your own server:
+
+```yaml
+mysql:
+  enabled: false
+
+applications:
+  mysql:
+    host: mysql.databases.svc.cluster.local
+    port: "3306"
+    user: ansibleforms
+    password: ...   # or supply it through secrets.existingSecret
+```
+
+**Create the schema first.** AnsibleForms migrates an existing schema forward
+but does not create one from nothing. The bundled MySQL gets it from the chart's
+init script, which your own server never sees, so apply
+[`files/schema.sql`](files/schema.sql) once before starting the application:
+
+```bash
+mysql -h your-db-host -u root -p < files/schema.sql
+```
+
+It creates the `AnsibleForms` database and its tables, creates nothing that is
+already there, and drops nothing, so re-running it is harmless. It grants no
+privileges either; give your AnsibleForms user access to that database yourself.
+
+Skip this and the symptom is confusing: the pod starts, passes its probes and
+serves the front page, because that page is static, while every query behind it
+fails with `Table 'AnsibleForms.jobs' doesn't exist`.
+
+**Disabling MySQL on a release that already runs it deletes the PVC**, and with
+a reclaim policy of `Delete` the data goes with it. Take a dump first.
+
 ## Security Best Practices
 
+- Prefer `secrets.existingSecret` over putting passwords in a values file
 - Use `--set` or `--set-file` to hide secrets
 - Consider using external secret management solutions (Vault, SOPS, etc.) for highly sensitive data
 

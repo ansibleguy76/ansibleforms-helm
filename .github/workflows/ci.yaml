@@ -29,9 +29,24 @@ jobs:
           pip install --quiet yamllint
           yamllint --strict .
 
+      # Rendering with nothing but the defaults has to FAIL: values.yaml ships
+      # placeholder credentials, and writing <ENTER_PASSWORD_HERE> into a real
+      # Secret is never what anyone meant. This asserts the guard is still there.
+      - name: Refuse to render the placeholder credentials
+        run: |
+          if helm template guard-check . >/dev/null 2>&1; then
+            echo "::error::The chart rendered with the placeholder credentials still in place."
+            exit 1
+          fi
+          helm template guard-check . 2>&1 | grep -q "secrets.existingSecret" || {
+            echo "::error::It failed, but not with the message that tells people how to fix it."
+            helm template guard-check . 2>&1 | tail -5
+            exit 1
+          }
+          echo "Placeholder credentials are refused, with a message pointing at the fix."
+
       - name: helm lint
         run: |
-          helm lint . --strict
           for f in ci/*-values.yaml test/values/*-values.yaml; do
             echo "::group::helm lint with $f"
             helm lint . --strict --values "$f"
@@ -112,6 +127,68 @@ jobs:
       # pod to become ready, so a broken probe or a bad default fails here.
       - name: ct install
         run: ct install --config ct.yaml --charts .
+
+      # ct can only install what a values file alone describes, and these two
+      # need something in the cluster first, so they are driven by hand. They
+      # are worth the extra minutes: between them they cover the two ways a
+      # deployment stops being self-contained.
+      - name: Install against a Secret managed outside the chart
+        run: |
+          kubectl create namespace existing-secret
+          kubectl -n existing-secret create secret generic ansibleforms-credentials \
+            --from-literal=DB_USER=root \
+            --from-literal=DB_PASSWORD=ci-not-a-real-password \
+            --from-literal=ENCRYPTION_SECRET=ci-not-a-real-secret \
+            --from-literal=ADMIN_USERNAME=admin \
+            --from-literal=ADMIN_PASSWORD=ci-not-a-real-password
+          helm install existing-secret . \
+            --namespace existing-secret \
+            --values test/values/existing-secret-values.yaml \
+            --wait --timeout 12m
+          # The chart must not have created one of its own alongside it.
+          if kubectl -n existing-secret get secret existing-secret-secrets >/dev/null 2>&1; then
+            echo "::error::The chart generated a Secret even though existingSecret was set."
+            exit 1
+          fi
+          kubectl -n existing-secret get pods
+          helm uninstall existing-secret --namespace existing-secret
+
+      - name: Install against a database the chart does not manage
+        run: |
+          kubectl create namespace external-db
+          kubectl -n external-db create secret generic mysql-root \
+            --from-literal=password=ci-not-a-real-password
+          kubectl -n external-db apply -f test/manifests/external-mysql.yaml
+          kubectl -n external-db rollout status deployment/external-mysql --timeout=8m
+          # A database the chart does not manage never sees the init script, and
+          # AnsibleForms migrates an existing schema forward rather than creating
+          # one, so the schema goes in first. This is exactly what the README
+          # tells operators to do, so the test does it the same way.
+          kubectl -n external-db exec -i deployment/external-mysql -- \
+            sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < files/schema.sql
+          helm install external-db . \
+            --namespace external-db \
+            --values test/values/external-db-values.yaml \
+            --set applications.mysql.host=external-mysql.external-db.svc.cluster.local \
+            --set applications.mysql.user=root \
+            --wait --timeout 12m
+          # Nothing MySQL-shaped should have come from the chart.
+          for kind in deployment/mysql service/mysql pvc/external-db-mysql-pvc; do
+            if kubectl -n external-db get "$kind" >/dev/null 2>&1; then
+              echo "::error::The chart created $kind with mysql.enabled set to false."
+              exit 1
+            fi
+          done
+          kubectl -n external-db get pods
+          # Ready is not enough here: the home page is static, so the pod comes
+          # up and answers even when every query underneath is failing. Look at
+          # what the application actually said instead.
+          if kubectl -n external-db logs deployment/server -c server | grep -q "doesn't exist"; then
+            echo "::error::The server is up but its tables are missing."
+            kubectl -n external-db logs deployment/server -c server | grep "doesn't exist" | head -5
+            exit 1
+          fi
+          helm uninstall external-db --namespace external-db
 
       - name: Dump cluster state on failure
         if: failure()

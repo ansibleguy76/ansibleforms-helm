@@ -1,0 +1,37 @@
+---
+# Extra environment from every source the container spec allows.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  server:
+    extraEnv:
+      - name: ENV
+        value: production
+      - name: CONFIG_SEED_PATH
+        value: /app/dist/persistent/seed.yaml
+      - name: SOME_TOKEN
+        valueFrom:
+          secretKeyRef:
+            name: another-secret
+            key: token
+      - name: POD_NAME
+        valueFrom:
+          fieldRef:
+            fieldPath: metadata.name
+    extraEnvFrom:
+      - configMapRef:
+          name: ansibleforms-extra-config
+      - secretRef:
+          name: ansibleforms-extra-secrets
+
+ingress:
+  enabled: false
