@@ -24,6 +24,13 @@
 {{- $appMysql := ($app.mysql | default dict) }}
 {{- $cmd := ($server.customCommand | default dict) }}
 {{- /*
+  Credentials come either from the Secret the chart generates or from one that
+  already exists, managed by External Secrets, Sealed Secrets or anything else.
+  Both cases expose the same five keys, so only the name changes here.
+*/}}
+{{- $secrets := (.Values.secrets | default dict) }}
+{{- $secretName := ($secrets.existingSecret | default (printf "%s-secrets" .Release.Name)) }}
+{{- /*
   HTTPS is documented as 0/1 and people write it unquoted, which makes it a
   number in YAML. atoi only accepts strings, so the unquoted form used to fail
   the render outright. toString takes both.
@@ -132,32 +139,48 @@ spec:
             - name: DB_USER
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ $secretName }}
                   key: DB_USER
 
             - name: DB_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ $secretName }}
                   key: DB_PASSWORD
 
             - name: ENCRYPTION_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ $secretName }}
                   key: ENCRYPTION_SECRET
 
             - name: ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ $secretName }}
                   key: ADMIN_USERNAME
 
             - name: ADMIN_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Release.Name }}-secrets
+                  name: {{ $secretName }}
                   key: ADMIN_PASSWORD
+
+            {{- /*
+              Anything applications.server.env cannot express: values read from
+              another Secret or ConfigMap, from the downward API, or a variable
+              whose name would collide with the ones above. Written last, so it
+              wins over the generated entries.
+            */}}
+            {{- with $server.extraEnv }}
+{{ toYaml . | nindent 12 }}
+            {{- end }}
+
+          {{- /* Whole ConfigMaps or Secrets injected as environment */}}
+          {{- with $server.extraEnvFrom }}
+          envFrom:
+{{ toYaml . | nindent 12 }}
+          {{- end }}
 
           resources:
             limits:
