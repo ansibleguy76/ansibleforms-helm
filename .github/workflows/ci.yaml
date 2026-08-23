@@ -160,12 +160,27 @@ jobs:
             --from-literal=password=ci-not-a-real-password
           kubectl -n external-db apply -f test/manifests/external-mysql.yaml
           kubectl -n external-db rollout status deployment/external-mysql --timeout=8m
+          # Belt and braces on top of the probe: wait until the server really
+          # answers over TCP before touching it.
+          for i in $(seq 1 60); do
+            if kubectl -n external-db exec deployment/external-mysql -- \
+                 sh -c 'mysqladmin ping -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" --silent' >/dev/null 2>&1; then
+              echo "MySQL is accepting connections."
+              break
+            fi
+            if [ "$i" = "60" ]; then
+              echo "::error::The external MySQL never came up."
+              kubectl -n external-db logs deployment/external-mysql --tail=50
+              exit 1
+            fi
+            sleep 5
+          done
           # A database the chart does not manage never sees the init script, and
           # AnsibleForms migrates an existing schema forward rather than creating
           # one, so the schema goes in first. This is exactly what the README
           # tells operators to do, so the test does it the same way.
           kubectl -n external-db exec -i deployment/external-mysql -- \
-            sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD"' < files/schema.sql
+            sh -c 'mysql -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD"' < files/schema.sql
           helm install external-db . \
             --namespace external-db \
             --values test/values/external-db-values.yaml \

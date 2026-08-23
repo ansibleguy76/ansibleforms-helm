@@ -40,13 +40,20 @@ spec:
             requests:
               cpu: 100m
               memory: 512Mi
+          # Over TCP and authenticated on purpose. While it initialises, MySQL
+          # runs a temporary server on the local socket with networking off, and
+          # a plain ping answers there too, so a simpler probe reports ready
+          # during a window in which the real server is not up yet.
           readinessProbe:
             exec:
-              command: ["mysqladmin", "ping", "-h", "127.0.0.1"]
+              command:
+                - sh
+                - -c
+                - 'mysqladmin ping -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" --silent'
             initialDelaySeconds: 20
-            periodSeconds: 10
+            periodSeconds: 5
             timeoutSeconds: 5
-            failureThreshold: 30
+            failureThreshold: 60
 ---
 apiVersion: v1
 kind: Service
