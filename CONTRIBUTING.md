@@ -35,6 +35,12 @@ request, merge to `main`, and the release workflow tags the version, attaches
 the packaged chart to a GitHub release, pushes it to GHCR as an OCI artifact and
 rebuilds the Helm repository index published on GitHub Pages.
 
+It runs after CI, not alongside it, and does nothing unless CI finished green,
+so a failing build cannot publish. Merging with a version that already has a tag
+is a no-op, which is what makes it safe to leave running on every push. To
+rebuild the Helm repository index without releasing anything, run the workflow
+by hand from the Actions tab.
+
 `version` is the chart version and follows the chart's own changes. `appVersion`
 tracks the AnsibleForms release the default image points at. They are no longer
 kept in lockstep: a fix to a template does not need a new application release.

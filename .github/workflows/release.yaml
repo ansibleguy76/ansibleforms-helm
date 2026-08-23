@@ -4,12 +4,21 @@ name: Release chart
 # request, merge to main, and this workflow tags the release, attaches the
 # packaged chart, pushes it to GHCR as an OCI artifact and refreshes the Helm
 # repository index served from GitHub Pages.
+#
+# It waits for CI rather than running beside it. Triggered on push, the two
+# raced: the first release went out while the tests were still going, so a red
+# build would have published anyway. workflow_run only fires once CI has
+# finished, and the job below refuses to do anything unless it finished green.
+#
+# There is no paths filter any more either. It was the wrong tool: a template
+# fix with no version bump published nothing, and touching Chart.yaml without
+# changing the version started a release for no reason. The "does this tag
+# already exist" check below decides that properly.
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - Chart.yaml
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -23,13 +32,24 @@ jobs:
   release:
     name: Package and publish
     runs-on: ubuntu-latest
+    # Green CI, and only from a push to main. A pull request whose branch also
+    # happens to be called main would otherwise reach this.
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push')
     permissions:
       contents: write
       packages: write
     outputs:
       released: ${{ steps.check.outputs.released }}
     steps:
+      # workflow_run always runs the workflow file from the default branch and
+      # checks out its tip by default, which is not necessarily the commit that
+      # was tested. Package what CI actually looked at.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: azure/setup-helm@v4
         with:
@@ -105,6 +125,8 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - uses: azure/setup-helm@v4
         with:
