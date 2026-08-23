@@ -1,5 +1,56 @@
 # Changelog
 
+## 6.2.1
+
+Three ways of running AnsibleForms that the chart could not express before.
+Everything is additive and every default is unchanged, so an existing release
+upgrades in place.
+
+### Added
+
+- **`secrets.existingSecret`.** Point it at a Secret you manage yourself and the
+  chart creates none, so credentials can come from External Secrets, Sealed
+  Secrets, SOPS or anything else without ever passing through `values.yaml`. The
+  Secret must hold `DB_USER`, `DB_PASSWORD`, `ENCRYPTION_SECRET`,
+  `ADMIN_USERNAME` and `ADMIN_PASSWORD`.
+- **`mysql.enabled`.** Set it to false and the chart deploys no database at all,
+  so AnsibleForms can talk to a server you already run: point
+  `applications.mysql.host` and `.port` at it. The Deployment, Service, PVC and
+  both ConfigMaps are skipped. Based on the work of @HrBingR in #6, with the
+  value renamed from `mysql_deployment.enabled` to match the rest of the chart.
+  **Careful on an existing release: disabling this removes the MySQL PVC, and
+  with a reclaim policy of Delete the data goes with it. Take a dump first.**
+- **`containers.server.extraEnv` and `containers.server.extraEnvFrom`,** for
+  environment `applications.server.env` cannot express: values from another
+  Secret or ConfigMap, from the downward API, or whole ConfigMaps and Secrets
+  injected at once.
+- **`files/schema.sql`.** The base schema used to be embedded in the MySQL init
+  ConfigMap, where only the bundled database could ever see it. It is now a file
+  the ConfigMap includes, so the same statements can be applied to a database
+  the chart does not manage. It no longer drops anything, creates each table
+  only if missing and grants nothing, so it is safe to run against a server that
+  already holds data. Running AnsibleForms on your own database needs this
+  applied once: the application migrates an existing schema forward but does not
+  create one, and without it the pod starts, passes its probes and serves the
+  static front page while every query behind it fails.
+
+### Fixed
+
+- **The chart no longer writes the placeholder credentials from `values.yaml`
+  into a real Secret.** It refuses to render and says how to fix it. This was
+  worse than it sounds: the generated Secret is called `<release>-secrets`,
+  which is exactly what most people name the one they manage themselves, so a
+  sync could quietly replace live credentials with `<ENTER_PASSWORD_HERE>`. The
+  symptom looks like a database problem rather than a configuration one.
+- Disabling MySQL no longer leaves a stray `---` at the end of `service.yaml`,
+  and the templates end with a newline.
+
+### Note for anyone rendering the chart with defaults only
+
+`helm template` and `helm lint` with no values now fail on purpose, because the
+shipped credentials are placeholders. Pass a values file, or set
+`secrets.existingSecret`.
+
 ## 6.2.0
 
 First release with continuous integration and an automated publish. Nothing was

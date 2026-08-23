@@ -1,3 +1,4 @@
+{{- if dig "enabled" true (.Values.mysql | default dict) }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -6,3 +7,4 @@ metadata:
 data:
   my.cnf: |
     [mysqld]
+{{- end }}
