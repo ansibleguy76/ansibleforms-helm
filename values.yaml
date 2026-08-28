@@ -1,4 +1,18 @@
 # ------------------------------------------------------------------------------
+# NAMING
+# ------------------------------------------------------------------------------
+# Every resource is named after the release: <release>-server, <release>-mysql,
+# <release>-secrets and so on. They used to be plain literals ("server",
+# "mysql"), which meant two releases in one namespace overwrote each other's
+# Deployments and each Service selected the other one's pods.
+#
+# nameOverride changes the app.kubernetes.io/name label, fullnameOverride
+# replaces the release name as the prefix of every resource name. Both are
+# optional and almost nobody needs them.
+nameOverride: ''
+fullnameOverride: ''
+
+# ------------------------------------------------------------------------------
 # MYSQL DEPLOYMENT
 # ------------------------------------------------------------------------------
 # Whether the chart deploys its own MySQL. Turn it off to point AnsibleForms at
@@ -246,9 +260,27 @@ services:
 # ~~~~
   mysql:
     type: ClusterIP
+    annotations: {}
 # ~~~~
   server:
     type: ClusterIP
+    # Annotations on the Service, not on the Ingress. Traefik reads its
+    # service.* settings from here, which is where you tell it to speak TLS to
+    # the backend when applications.server.env.HTTPS is 1:
+    #
+    #   annotations:
+    #     traefik.ingress.kubernetes.io/service.serversscheme: https
+    #
+    # The application serves a self-signed certificate, so traefik also needs a
+    # ServersTransport with insecureSkipVerify, referenced from here:
+    #
+    #     traefik.ingress.kubernetes.io/service.serverstransport: <ns>-<name>@kubernetescrd
+    #
+    # On ingress-nginx the equivalent lives on the Ingress instead, as
+    # ingress.extraAnnotations:
+    #
+    #     nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+    annotations: {}
 # ~~~~
 
 # ------------------------------------------------------------------------------

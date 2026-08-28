@@ -53,6 +53,59 @@ jobs:
             echo "::endgroup::"
           done
 
+      # The Service moves to 443 when applications.server.env.HTTPS is 1, and the
+      # Ingress backend used to say 80 regardless, so with HTTPS on the Ingress
+      # pointed at a port the Service did not expose and every request came back
+      # 503. They are tied together by port name now.
+      #
+      # This resolves the backend the way an ingress controller does, following
+      # the Service name and then the port, so it stays honest whether the
+      # backend is written as a name or as a number.
+      # PyYAML is already here, it comes in with yamllint above.
+      - name: The Ingress backend must resolve to a port the Service publishes
+        run: |
+          set -euo pipefail
+          for f in ci/default-values.yaml test/values/https-values.yaml; do
+            echo "::group::ingress backend with $f"
+            helm template portcheck . --values "$f" > /tmp/portcheck.yaml
+            python3 - <<'PY'
+          import sys, yaml
+
+          docs = [d for d in yaml.safe_load_all(open("/tmp/portcheck.yaml")) if d]
+          ingresses = [d for d in docs if d["kind"] == "Ingress"]
+          if not ingresses:
+              sys.exit("::error::No Ingress was rendered, so this proves nothing.")
+
+          services = {d["metadata"]["name"]: d for d in docs if d["kind"] == "Service"}
+
+          for ing in ingresses:
+              for rule in ing["spec"]["rules"]:
+                  for path in rule["http"]["paths"]:
+                      backend = path["backend"]["service"]
+                      name, port = backend["name"], backend["port"]
+                      svc = services.get(name)
+                      if svc is None:
+                          sys.exit(f"::error::Ingress points at Service {name!r}, "
+                                   f"which the chart does not render. "
+                                   f"It renders {sorted(services)}.")
+                      published = svc["spec"]["ports"]
+                      by_name = {p["name"]: p["port"] for p in published if p.get("name")}
+                      by_number = {p["port"] for p in published}
+                      if "name" in port:
+                          ok = port["name"] in by_name
+                      else:
+                          ok = port["number"] in by_number
+                      print(f"{name} backend {port} against published {published}: "
+                            f"{'ok' if ok else 'BROKEN'}")
+                      if not ok:
+                          sys.exit(f"::error::Ingress asks {name} for {port}, but that "
+                                   f"Service publishes {sorted(by_number)} "
+                                   f"(named {sorted(by_name)}).")
+          print("Every Ingress backend resolves to a port its Service publishes.")
+          PY
+            echo "::endgroup::"
+          done
+
       - name: Install kubeconform
         run: |
           curl -sSLo /tmp/kubeconform.tar.gz \
@@ -188,7 +241,7 @@ jobs:
             --set applications.mysql.user=root \
             --wait --timeout 12m
           # Nothing MySQL-shaped should have come from the chart.
-          for kind in deployment/mysql service/mysql pvc/external-db-mysql-pvc; do
+          for kind in deployment/external-db-mysql service/external-db-mysql pvc/external-db-mysql-pvc; do
             if kubectl -n external-db get "$kind" >/dev/null 2>&1; then
               echo "::error::The chart created $kind with mysql.enabled set to false."
               exit 1
@@ -198,17 +251,59 @@ jobs:
           # Ready is not enough here: the home page is static, so the pod comes
           # up and answers even when every query underneath is failing. Look at
           # what the application actually said instead.
-          if kubectl -n external-db logs deployment/server -c server | grep -q "doesn't exist"; then
+          if kubectl -n external-db logs deployment/external-db-server -c server | grep -q "doesn't exist"; then
             echo "::error::The server is up but its tables are missing."
-            kubectl -n external-db logs deployment/server -c server | grep "doesn't exist" | head -5
+            kubectl -n external-db logs deployment/external-db-server -c server | grep "doesn't exist" | head -5
             exit 1
           fi
           helm uninstall external-db --namespace external-db
+
+      # Every Deployment, Service and ConfigMap used to be named with a plain
+      # literal, so a second release in the same namespace overwrote the first
+      # and each Service selected the other one's pods. Install two and check
+      # they stay apart.
+      - name: Two releases side by side in one namespace
+        run: |
+          kubectl create namespace side-by-side
+          for rel in blue green; do
+            helm install "$rel" . \
+              --namespace side-by-side \
+              --values ci/no-ingress-values.yaml \
+              --wait --timeout 12m
+          done
+          kubectl -n side-by-side get all
+          for rel in blue green; do
+            for kind in deployment/${rel}-server deployment/${rel}-mysql \
+                        service/${rel}-server service/${rel}-mysql \
+                        secret/${rel}-secrets pvc/${rel}-server-pvc pvc/${rel}-mysql-pvc; do
+              kubectl -n side-by-side get "$kind" >/dev/null || {
+                echo "::error::$kind is missing, the two releases collided."
+                exit 1
+              }
+            done
+            # The Service must resolve to its own release's pod and nobody else's.
+            # EndpointSlice rather than Endpoints, which is deprecated from 1.33.
+            eps="$(kubectl -n side-by-side get endpointslices \
+                     -l "kubernetes.io/service-name=${rel}-server" \
+                     -o jsonpath='{.items[*].endpoints[*].targetRef.name}')"
+            echo "${rel}-server endpoints: $eps"
+            count="$(printf '%s' "$eps" | wc -w)"
+            if [ "$count" != "1" ]; then
+              echo "::error::${rel}-server selects $count pods, expected exactly 1."
+              exit 1
+            fi
+            case "$eps" in
+              ${rel}-server-*) ;;
+              *) echo "::error::${rel}-server selects $eps, which belongs to the other release."; exit 1 ;;
+            esac
+          done
+          echo "The two releases are fully independent."
+          helm uninstall blue green --namespace side-by-side
 
       - name: Dump cluster state on failure
         if: failure()
         run: |
           kubectl get pods --all-namespaces
           kubectl describe pods --all-namespaces
-          kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/name=server --all-namespaces || true
-          kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/name=mysql --all-namespaces || true
+          kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/component=server --all-namespaces || true
+          kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/component=database --all-namespaces || true

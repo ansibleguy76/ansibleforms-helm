@@ -5,12 +5,9 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   namespace: {{ .Release.Namespace }}
-  name: {{ .Release.Name }}-server-pvc
+  name: {{ include "ansibleforms.server.pvcName" . }}
   labels:
-    app.kubernetes.io/name: server
-    app.kubernetes.io/instance: server
-    app.kubernetes.io/component: server
-    app.kubernetes.io/part-of: {{ .Release.Name }}
+    {{- include "ansibleforms.server.labels" . | nindent 4 }}
 spec:
   accessModes:
     - {{ $server.accessMode | default "ReadWriteMany" }}
@@ -26,7 +23,7 @@ spec:
   {{- else }}
   storageClassName: ""
   {{- end }}
-  volumeName: {{ default (printf "%s-server-pv" .Release.Name) $static.volumeName }}
+  volumeName: {{ default (printf "%s-server-pv" (include "ansibleforms.fullname" .)) $static.volumeName }}
 
   {{- else }}
 

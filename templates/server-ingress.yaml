@@ -2,8 +2,10 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: {{ .Release.Name }}-ingress
+  name: {{ include "ansibleforms.ingressName" . }}
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ansibleforms.server.labels" . | nindent 4 }}
   annotations:
     {{- range $key, $value := .Values.ingress.annotations }}
     {{ $key }}: {{ $value | quote }}
@@ -12,7 +14,9 @@ metadata:
     {{ $key }}: {{ $value | quote }}
     {{- end }}
 spec:
-  ingressClassName: {{ .Values.ingress.className }}
+  {{- with .Values.ingress.className }}
+  ingressClassName: {{ . }}
+  {{- end }}
   {{- if .Values.ingress.tls.enabled }}
   tls:
     - hosts:
@@ -21,7 +25,7 @@ spec:
         - {{ . }}
         {{- end }}
       # allow explicit override via .Values.ingress.secretName, otherwise use release name
-      secretName: {{ default (printf "%s-tls" .Release.Name) .Values.ingress.secretName }}
+      secretName: {{ default (printf "%s-tls" (include "ansibleforms.fullname" .)) .Values.ingress.secretName }}
   {{- end }}
   rules:
     - host: {{ .Values.ingress.hostname }}
@@ -31,9 +35,16 @@ spec:
             pathType: {{ .Values.ingress.pathType }}
             backend:
               service:
-                name: server
+                name: {{ include "ansibleforms.server.fullname" . }}
+                {{- /*
+                  By name, not by number. The Service listens on 80 or 443
+                  depending on applications.server.env.HTTPS, and this used to
+                  say 80 either way: turning HTTPS on produced an Ingress
+                  pointing at a port the Service did not expose, and every
+                  request came back 503.
+                */}}
                 port:
-                  number: 80
+                  name: http
           {{- range .Values.ingress.extraPaths }}
           - path: {{ .path }}
             pathType: {{ .pathType | default "Prefix" }}

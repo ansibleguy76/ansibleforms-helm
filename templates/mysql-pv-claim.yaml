@@ -6,12 +6,9 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   namespace: {{ .Release.Namespace }}
-  name: {{ .Release.Name }}-mysql-pvc
+  name: {{ include "ansibleforms.mysql.pvcName" . }}
   labels:
-    app.kubernetes.io/name: mysql
-    app.kubernetes.io/instance: mysql
-    app.kubernetes.io/component: database
-    app.kubernetes.io/part-of: {{ .Release.Name }}
+    {{- include "ansibleforms.mysql.labels" . | nindent 4 }}
 spec:
   accessModes:
     - {{ $mysql.accessMode | default "ReadWriteMany" }}
@@ -27,7 +24,7 @@ spec:
   {{- else }}
   storageClassName: ""
   {{- end }}
-  volumeName: {{ default (printf "%s-mysql-pv" .Release.Name) $static.volumeName }}
+  volumeName: {{ default (printf "%s-mysql-pv" (include "ansibleforms.fullname" .)) $static.volumeName }}
 
   {{- else }}
 
