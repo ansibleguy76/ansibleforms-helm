@@ -1,0 +1,37 @@
+---
+# Plain HTTP behind an ingress controller, which is what most people run. The
+# render matrix covers the manifest; the install job puts a real controller in
+# front of it and asks for the page.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  mysql:
+    resources:
+      limits: {cpu: '1', memory: 1024Mi}
+      requests: {cpu: 100m, memory: 256Mi}
+  server:
+    resources:
+      limits: {cpu: '1', memory: 1024Mi}
+      requests: {cpu: 100m, memory: 256Mi}
+
+ingress:
+  enabled: true
+  className: nginx
+  hostname: ansibleforms.ci.example.com
+  tls:
+    enabled: false
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+
+storages:
+  mysql: {size: 1Gi, accessMode: ReadWriteOnce}
+  server: {size: 1Gi, accessMode: ReadWriteOnce}
