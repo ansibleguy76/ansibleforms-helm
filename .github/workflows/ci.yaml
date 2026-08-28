@@ -106,6 +106,91 @@ jobs:
             echo "::endgroup::"
           done
 
+      # Scheduling is pass-through: whatever goes into the values file has to
+      # come out in the pod spec, unchanged and in the right place. kubeconform
+      # already rejects a block indented into the wrong parent, since the stray
+      # keys show up as additionalProperties, but it cannot notice a field that
+      # was quietly dropped because the template never referenced it. This
+      # compares the two sides directly.
+      - name: Scheduling values must reach both pod specs
+        run: |
+          set -euo pipefail
+          helm template sched . --values test/values/scheduling-values.yaml > /tmp/sched.yaml
+          python3 - <<'PY'
+          import sys, yaml
+
+          values = yaml.safe_load(open("test/values/scheduling-values.yaml"))
+          docs = [d for d in yaml.safe_load_all(open("/tmp/sched.yaml")) if d]
+          pods = {d["metadata"]["name"]: d["spec"]["template"]
+                  for d in docs if d["kind"] == "Deployment"}
+
+          FIELDS = ["nodeSelector", "tolerations", "affinity",
+                    "topologySpreadConstraints", "priorityClassName",
+                    "serviceAccountName"]
+          failures = []
+
+          for comp, name in (("server", "sched-server"), ("mysql", "sched-mysql")):
+              cfg = values["containers"][comp]
+              spec = pods[name]["spec"]
+
+              for field in FIELDS:
+                  want = cfg.get(field)
+                  if not want:
+                      continue
+                  got = spec.get(field)
+                  if got != want:
+                      failures.append(f"{name}: {field} is {got!r}, values asked for {want!r}")
+
+              # imagePullSecrets falls back to the release wide list
+              want = cfg.get("imagePullSecrets") or values.get("imagePullSecrets")
+              if want and spec.get("imagePullSecrets") != want:
+                  failures.append(f"{name}: imagePullSecrets is "
+                                  f"{spec.get('imagePullSecrets')!r}, expected {want!r}")
+
+              # podLabels and commonLabels both land on the pod, never on the selector
+              labels = pods[name]["metadata"]["labels"]
+              for k, v in (cfg.get("podLabels") or {}).items():
+                  if labels.get(k) != v:
+                      failures.append(f"{name}: podLabel {k}={v} missing from the pod")
+              for k, v in (values.get("commonLabels") or {}).items():
+                  if labels.get(k) != str(v):
+                      failures.append(f"{name}: commonLabel {k}={v} missing from the pod")
+
+              ann = pods[name]["metadata"].get("annotations") or {}
+              for k, v in (values.get("commonAnnotations") or {}).items():
+                  if ann.get(k) != v:
+                      failures.append(f"{name}: commonAnnotation {k} missing from the pod")
+
+          # A Deployment selector is immutable. A commonLabel landing there would
+          # make the chart impossible to upgrade, so this one is not negotiable.
+          for d in docs:
+              if d["kind"] != "Deployment":
+                  continue
+              sel = d["spec"]["selector"]["matchLabels"]
+              for k in list(values.get("commonLabels") or {}) + ["role"]:
+                  if k in sel:
+                      failures.append(f"{d['metadata']['name']}: {k!r} reached the "
+                                      f"selector, which is immutable")
+
+          # commonLabels and commonAnnotations reach every object, not just the pods
+          for d in docs:
+              where = f"{d['kind']}/{d['metadata']['name']}"
+              labels = d["metadata"].get("labels") or {}
+              ann = d["metadata"].get("annotations") or {}
+              for k, v in (values.get("commonLabels") or {}).items():
+                  if labels.get(k) != str(v):
+                      failures.append(f"{where}: commonLabel {k} missing")
+              for k in (values.get("commonAnnotations") or {}):
+                  if k not in ann:
+                      failures.append(f"{where}: commonAnnotation {k} missing")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit("::error::Scheduling or common metadata did not survive rendering.")
+          print(f"Checked {len(FIELDS) + 1} fields on both pods and common metadata "
+                f"on all {len(docs)} objects.")
+          PY
+
       - name: Install kubeconform
         run: |
           curl -sSLo /tmp/kubeconform.tar.gz \

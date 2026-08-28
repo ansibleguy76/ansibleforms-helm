@@ -9,7 +9,8 @@ metadata:
   name: {{ include "ansibleforms.server.fullname" . }}
   labels:
     {{- include "ansibleforms.server.labels" . | nindent 4 }}
-  {{- with $serverSvc.annotations }}
+  {{- /* The Service's own annotations win over commonAnnotations on a clash */}}
+  {{- with (merge (dict) ($serverSvc.annotations | default dict) (.Values.commonAnnotations | default dict)) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
@@ -42,7 +43,8 @@ metadata:
   name: {{ include "ansibleforms.mysql.fullname" . }}
   labels:
     {{- include "ansibleforms.mysql.labels" . | nindent 4 }}
-  {{- with $mysqlSvc.annotations }}
+  {{- /* The Service's own annotations win over commonAnnotations on a clash */}}
+  {{- with (merge (dict) ($mysqlSvc.annotations | default dict) (.Values.commonAnnotations | default dict)) }}
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}

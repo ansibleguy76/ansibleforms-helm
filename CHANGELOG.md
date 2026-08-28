@@ -1,5 +1,47 @@
 # Changelog
 
+## 6.2.3
+
+Where the pods are allowed to run, and how to label everything the chart
+creates. All of it is additive and every default is empty, so an existing
+release upgrades with no change to what it renders.
+
+### Added
+
+- **Scheduling, on both components.** `nodeSelector`, `tolerations`, `affinity`,
+  `topologySpreadConstraints` and `priorityClassName` under
+  `containers.server` and `containers.mysql`. Passed through as written, so
+  anything Kubernetes accepts works here. The database is usually the half that
+  needs pinning, since it is the one that owns a volume.
+- **`imagePullSecrets`,** at the root for both images, and per component under
+  `containers.server` and `containers.mysql` when the two live in different
+  registries. Without this the chart could not be used from a private registry
+  or a mirror at all. The Secrets have to exist already, the chart does not
+  create them.
+- **`commonLabels` and `commonAnnotations`,** added to every object the chart
+  creates and to both pods. For cost tags, ownership, Argo CD tracking, backup
+  selectors and the like. They never reach a Deployment's selector, which is
+  immutable: a label added there could not be changed or removed afterwards, and
+  an existing release would fail to upgrade outright.
+- **`podLabels`,** on both components, next to the `podAnnotations` the server
+  already had. `podAnnotations` now exists for MySQL too.
+- **`serviceAccountName` for MySQL,** and the server's is documented in
+  `values.yaml` at last. The chart still creates no ServiceAccount, it only uses
+  one you name.
+
+### Notes
+
+`serviceAccountName` was already read from the values by the server template but
+never appeared in `values.yaml`, so nobody could reasonably have known it was
+there.
+
+CI gains a check that every scheduling field in a values file comes out in the
+pod spec unchanged, that `commonLabels` and `commonAnnotations` reach every
+object, and that neither reaches a selector. Rendering already rejected a block
+indented into the wrong parent, since the stray keys show up to `kubeconform`
+as `additionalProperties`, but nothing caught a field the template simply never
+referenced.
+
 ## 6.2.2
 
 Two bugs, both of which stop the chart working in situations people actually

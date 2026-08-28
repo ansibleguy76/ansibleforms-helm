@@ -9,6 +9,10 @@ metadata:
   name: {{ include "ansibleforms.mysql.pvcName" . }}
   labels:
     {{- include "ansibleforms.mysql.labels" . | nindent 4 }}
+  {{- with (include "ansibleforms.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 spec:
   accessModes:
     - {{ $mysql.accessMode | default "ReadWriteMany" }}

@@ -494,6 +494,87 @@ spec:
 Leave `HTTPS: 0` if you would rather have the ingress controller terminate TLS
 and talk plain HTTP inside the cluster, which is what most people want.
 
+## Where the pods run
+
+`nodeSelector`, `tolerations`, `affinity`, `topologySpreadConstraints` and
+`priorityClassName` are available on both components and passed through exactly
+as written, so anything Kubernetes accepts works. All empty by default.
+
+```yaml
+containers:
+  server:
+    nodeSelector:
+      kubernetes.io/hostname: node-1
+    tolerations:
+      - key: workload
+        operator: Equal
+        value: apps
+        effect: NoSchedule
+    priorityClassName: high-priority
+  mysql:
+    # Usually the one that needs pinning, since it is the half owning a volume
+    nodeSelector:
+      kubernetes.io/hostname: node-1
+    tolerations:
+      - key: storage
+        operator: Exists
+        effect: NoSchedule
+```
+
+The chart creates no ServiceAccount and no PriorityClass. Name ones you manage
+yourself with `containers.<component>.serviceAccountName` and
+`priorityClassName`, otherwise the namespace's `default` ServiceAccount is used
+and no priority class is set.
+
+## Private registries
+
+`imagePullSecrets` at the root covers both images:
+
+```yaml
+imagePullSecrets:
+  - name: regcred
+```
+
+Override it per component when the two images live in different registries:
+
+```yaml
+containers:
+  mysql:
+    imagePullSecrets:
+      - name: mysql-regcred
+```
+
+The Secrets have to exist in the release namespace already. The chart does not
+create them:
+
+```bash
+kubectl -n <namespace> create secret docker-registry regcred \
+  --docker-server=registry.example.com \
+  --docker-username=... --docker-password=...
+```
+
+## Labelling everything
+
+`commonLabels` and `commonAnnotations` go on every object the chart creates and
+on both pods, for cost tags, ownership, Argo CD tracking, backup selectors and
+so on:
+
+```yaml
+commonLabels:
+  team: platform
+  cost-center: "4711"
+
+commonAnnotations:
+  example.com/owner: platform@example.com
+```
+
+They deliberately never reach a Deployment's selector. A selector is immutable
+once the Deployment exists, so a label added there could never be changed or
+removed again, and an existing release would refuse to upgrade.
+
+For labels on one pod only, use `containers.<component>.podLabels`, and
+`podAnnotations` for annotations.
+
 ## Resource names
 
 Everything the chart creates is named after the release:
