@@ -28,36 +28,28 @@
   already exists, managed by External Secrets, Sealed Secrets or anything else.
   Both cases expose the same five keys, so only the name changes here.
 */}}
-{{- $secrets := (.Values.secrets | default dict) }}
-{{- $secretName := ($secrets.existingSecret | default (printf "%s-secrets" .Release.Name)) }}
+{{- $secretName := include "ansibleforms.secretName" . }}
 {{- /*
-  HTTPS is documented as 0/1 and people write it unquoted, which makes it a
-  number in YAML. atoi only accepts strings, so the unquoted form used to fail
-  the render outright. toString takes both.
+  The listening port and its scheme come from a helper so the container, the
+  Service and the three probes cannot drift apart.
 */}}
-{{- $https := eq (toString ($appEnv.HTTPS | default "0")) "1" }}
+{{- $port := include "ansibleforms.server.port" . }}
+{{- $scheme := include "ansibleforms.server.scheme" . }}
 {{- $sensitive := dict "ENCRYPTION_SECRET" true "ADMIN_USERNAME" true "ADMIN_PASSWORD" true }}
 
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: server
+  name: {{ include "ansibleforms.server.fullname" . }}
   namespace: {{ .Release.Namespace }}
   labels:
-    app.kubernetes.io/name: server
-    app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: server
-    app.kubernetes.io/part-of: {{ .Release.Name }}
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
-    {{- if .Chart.AppVersion }}
-    app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
-    {{- end }}
+    {{- include "ansibleforms.server.labels" . | nindent 4 }}
 spec:
   replicas: {{ $server.replicas | default 1 }}
   {{- /* The selector is immutable on an existing Deployment, leave it alone */}}
   selector:
     matchLabels:
-      app.kubernetes.io/name: server
+      {{- include "ansibleforms.server.selectorLabels" . | nindent 6 }}
 
   strategy:
     type: {{ $strategyType }}
@@ -65,10 +57,7 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: server
-        app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: server
-        app.kubernetes.io/part-of: {{ .Release.Name }}
+        {{- include "ansibleforms.server.labels" . | nindent 8 }}
       {{- with $server.podAnnotations }}
       annotations:
 {{ toYaml . | nindent 8 }}
@@ -117,11 +106,14 @@ spec:
           {{- end }}
 
           ports:
-            - containerPort: {{ if $https }}443{{ else }}80{{ end }}
+            {{- /* Named so the Service and the Ingress can point at it by name */}}
+            - name: http
+              containerPort: {{ $port }}
+              protocol: TCP
 
           env:
             - name: PORT
-              value: "{{ if $https }}443{{ else }}80{{ end }}"
+              value: {{ $port | quote }}
 
             {{- range $key, $value := $appEnv }}
             {{- if not (index $sensitive $key) }}
@@ -130,8 +122,12 @@ spec:
             {{- end }}
             {{- end }}
 
+            {{- /*
+              The bundled MySQL Service is named after the release now, so the
+              default cannot be the literal "mysql" any more.
+            */}}
             - name: DB_HOST
-              value: {{ $appMysql.host | default "mysql" | quote }}
+              value: {{ include "ansibleforms.mysql.host" . | quote }}
 
             - name: DB_PORT
               value: {{ $appMysql.port | default "3306" | quote }}
@@ -222,8 +218,8 @@ spec:
           startupProbe:
             httpGet:
               path: {{ $startup.path | default $readiness.path | default "/" }}
-              port: {{ if $https }}443{{ else }}80{{ end }}
-              scheme: {{ if $https }}HTTPS{{ else }}HTTP{{ end }}
+              port: http
+              scheme: {{ $scheme }}
             initialDelaySeconds: {{ $startup.initialDelaySeconds | default 10 }}
             periodSeconds: {{ $startup.periodSeconds | default 10 }}
             timeoutSeconds: {{ $startup.timeoutSeconds | default 5 }}
@@ -233,8 +229,8 @@ spec:
           livenessProbe:
             httpGet:
               path: {{ $liveness.path | default "/" }}
-              port: {{ if $https }}443{{ else }}80{{ end }}
-              scheme: {{ if $https }}HTTPS{{ else }}HTTP{{ end }}
+              port: http
+              scheme: {{ $scheme }}
             initialDelaySeconds: {{ $liveness.initialDelaySeconds | default 15 }}
             periodSeconds: {{ $liveness.periodSeconds | default 15 }}
             timeoutSeconds: {{ $liveness.timeoutSeconds | default 15 }}
@@ -243,8 +239,8 @@ spec:
           readinessProbe:
             httpGet:
               path: {{ $readiness.path | default "/" }}
-              port: {{ if $https }}443{{ else }}80{{ end }}
-              scheme: {{ if $https }}HTTPS{{ else }}HTTP{{ end }}
+              port: http
+              scheme: {{ $scheme }}
             initialDelaySeconds: {{ $readiness.initialDelaySeconds | default 15 }}
             periodSeconds: {{ $readiness.periodSeconds | default 15 }}
             timeoutSeconds: {{ $readiness.timeoutSeconds | default 15 }}
@@ -289,7 +285,7 @@ spec:
       volumes:
         - name: server-persistent-storage
           persistentVolumeClaim:
-            claimName: {{ .Release.Name }}-server-pvc
+            claimName: {{ include "ansibleforms.server.pvcName" . }}
 
         {{- with .Values.forms }}
           {{- with .configMap }}

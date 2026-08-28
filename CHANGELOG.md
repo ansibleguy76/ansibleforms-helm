@@ -1,5 +1,80 @@
 # Changelog
 
+## 6.2.2
+
+Two bugs, both of which stop the chart working in situations people actually
+hit. Nothing is added and no default changes, but four resources are renamed,
+so read the upgrade note below before running it.
+
+### Fixed
+
+- **Turning on HTTPS broke the Ingress.** Setting
+  `applications.server.env.HTTPS: 1` moves the application and its Service to
+  443, but the Ingress backend said port 80 no matter what. The result was an
+  Ingress pointing at a port its Service did not publish: ingress-nginx answers
+  503, Traefik logs `Cannot create service: service port not found` and drops
+  the route to a 404. The application itself was healthy the whole time, which
+  is what made it so confusing to debug. The container port, the Service port
+  and the three probes are now a single named port, and the Ingress backend
+  refers to it by name, so the three cannot disagree again. CI resolves the
+  Ingress backend the way a controller does and fails if it does not land on a
+  port the Service publishes.
+
+- **Two releases in the same namespace fought over each other.** The
+  Deployments, Services and ConfigMaps were named with plain literals: `server`,
+  `mysql`, `mysql-my-cnf` and `mysql-init-script`. Installing a second release
+  beside the first fails outright under Helm, which refuses to adopt resources
+  another release owns. Rendered with `helm template` and applied, which is how
+  Argo CD and Flux deploy it, nothing stops it at all: the second release
+  silently overwrites the first's Deployments and Services, and the first
+  release's PersistentVolumeClaims are left bound, paid for and mounted by
+  nothing. On top of that both Services selected `app.kubernetes.io/name:
+  server`, identical across releases, so each Service could route to the other
+  one's pods. Every resource is now named after the release and the selectors
+  carry the instance, so releases are independent.
+
+- **Labels were copied by hand into eight templates and had drifted.** The PVCs
+  claimed `app.kubernetes.io/instance: server`, the Services claimed
+  `instance: mysql`, `part-of` held the release name rather than the
+  application, and only the server Deployment carried `managed-by` and
+  `version`. They come from one helper now and follow the standard meaning, so
+  `app.kubernetes.io/instance` is the release and `app.kubernetes.io/component`
+  is what tells the server and the database apart.
+
+### Added
+
+- **`services.server.annotations` and `services.mysql.annotations`.** Needed to
+  make HTTPS usable end to end: Traefik reads its `service.*` settings from the
+  Service, not from the Ingress, and that is where you tell it to speak TLS to
+  the backend. There was no way to put an annotation on either Service before.
+- **`nameOverride` and `fullnameOverride`,** the usual pair, for when the
+  release name is not the prefix you want.
+
+### Upgrading
+
+Four resources are renamed: `server`, `mysql`, `mysql-my-cnf` and
+`mysql-init-script` become `<release>-server`, `<release>-mysql`,
+`<release>-mysql-my-cnf` and `<release>-mysql-init`. Helm creates the new ones
+and removes the old, which rolls both pods once.
+
+**No storage is touched.** The Secret, the Ingress and both PersistentVolumeClaims
+keep the names they have always had, which is why the prefix is the release name
+rather than the `<release>-<chart>` a scaffolded chart would use. Renaming a PVC
+does not move a volume, it provisions an empty one and deletes the old, so those
+names were left exactly as they were. The upgrade was run against a release
+holding real data to confirm it: same claims, same volumes, database rows and
+the generated SSH key all still there afterwards.
+
+Two things to know:
+
+- `applications.mysql.host` now defaults to `<release>-mysql` instead of the
+  literal `mysql`. If you run your own database and relied on the old default
+  resolving to something you deployed yourself, set the value explicitly.
+- Anything outside the chart that selects on `app.kubernetes.io/name: server` or
+  `name: mysql` needs updating to `app.kubernetes.io/component: server` or
+  `component: database`. That covers NetworkPolicies, ServiceMonitors and
+  scripts that do `kubectl logs deployment/server`.
+
 ## 6.2.1
 
 Three ways of running AnsibleForms that the chart could not express before.

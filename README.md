@@ -37,7 +37,7 @@ helm upgrade --install ansibleforms oci://ghcr.io/ansibleguy76/charts/ansiblefor
 ```
 
 Pin the chart version in anything that runs unattended, for example
-`--version 6.2.0`, so a new release never lands on its own.
+`--version 6.2.2`, so a new release never lands on its own.
 
 ## Usage
 
@@ -141,7 +141,7 @@ ingress:
     nginx.ingress.kubernetes.io/rewrite-target: /
   issuer: letsencrypt-prod
   extraHosts: [] # ["other.example.com"]
-  extraPaths: [] # [{ path: /api, serviceName: server, servicePort: 80 }]
+  extraPaths: [] # [{ path: /api, serviceName: ansibleforms-server, servicePort: 80 }]
   extraAnnotations: {}
 ```
 
@@ -449,6 +449,75 @@ fails with `Table 'AnsibleForms.jobs' doesn't exist`.
 **Disabling MySQL on a release that already runs it deletes the PVC**, and with
 a reclaim policy of `Delete` the data goes with it. Take a dump first.
 
+### 8. Serving HTTPS behind an ingress
+
+`applications.server.env.HTTPS: 1` makes AnsibleForms terminate TLS itself, and
+the container, its Service and its probes all move to 443. The Ingress follows
+automatically, because it refers to the Service port by name rather than by
+number.
+
+What does not follow automatically is your ingress controller: it still has to
+be told to speak TLS to the backend instead of plain HTTP, and the certificate
+AnsibleForms serves is self-signed. Where that setting lives depends on the
+controller.
+
+On ingress-nginx it is an annotation on the Ingress:
+
+```yaml
+ingress:
+  extraAnnotations:
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+```
+
+On Traefik the `service.*` settings are read from the **Service**, not from the
+Ingress, so they go under `services.server.annotations`. Skipping verification
+needs a `ServersTransport` object, which the chart does not create:
+
+```yaml
+services:
+  server:
+    annotations:
+      traefik.ingress.kubernetes.io/service.serversscheme: https
+      traefik.ingress.kubernetes.io/service.serverstransport: myns-insecure@kubernetescrd
+```
+
+```yaml
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: insecure
+  namespace: myns
+spec:
+  insecureSkipVerify: true
+```
+
+Leave `HTTPS: 0` if you would rather have the ingress controller terminate TLS
+and talk plain HTTP inside the cluster, which is what most people want.
+
+## Resource names
+
+Everything the chart creates is named after the release:
+
+| Resource | Name |
+| --- | --- |
+| Server Deployment, Service | `<release>-server` |
+| MySQL Deployment, Service | `<release>-mysql` |
+| MySQL ConfigMaps | `<release>-mysql-my-cnf`, `<release>-mysql-init` |
+| Secret | `<release>-secrets` |
+| PersistentVolumeClaims | `<release>-server-pvc`, `<release>-mysql-pvc` |
+| Ingress | `<release>-ingress` |
+
+Set `fullnameOverride` to use a different prefix, or `nameOverride` to change
+the `app.kubernetes.io/name` label without touching the names.
+
+To select the pods from outside the chart, use the component label rather than
+the name label, which is the same for both:
+
+```bash
+kubectl logs -l app.kubernetes.io/component=server
+kubectl logs -l app.kubernetes.io/component=database
+```
+
 ## Security Best Practices
 
 - Prefer `secrets.existingSecret` over putting passwords in a values file
@@ -554,5 +623,6 @@ containers:
 
 ## Notes
 
-- Pods/services are named and discoverable by their service name within the namespace.
+- Pods and Services are discoverable by their service name within the namespace.
+  See [Resource names](#resource-names) for what those names are.
 - For a full list of environment variables and their meanings, see the comments in `values.yaml` or visit the AnsibleForms documentation.

@@ -8,8 +8,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mysql-init-script
+  name: {{ include "ansibleforms.mysql.fullname" . }}-init
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ansibleforms.mysql.labels" . | nindent 4 }}
 data:
   init.sql: |
     -- The bundled server starts with a root account restricted to localhost,

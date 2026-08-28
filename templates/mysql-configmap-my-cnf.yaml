@@ -2,8 +2,10 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: mysql-my-cnf
+  name: {{ include "ansibleforms.mysql.fullname" . }}-my-cnf
   namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ansibleforms.mysql.labels" . | nindent 4 }}
 data:
   my.cnf: |
     [mysqld]
