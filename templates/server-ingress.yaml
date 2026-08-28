@@ -6,13 +6,21 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ansibleforms.server.labels" . | nindent 4 }}
+  {{- /*
+    Most specific wins: extraAnnotations over ingress.annotations over
+    commonAnnotations. Rendered through one merge rather than three ranges, so a
+    key set in two places appears once instead of producing a duplicate key.
+  */}}
+  {{- $ann := merge (dict)
+        (.Values.ingress.extraAnnotations | default dict)
+        (.Values.ingress.annotations | default dict)
+        (.Values.commonAnnotations | default dict) }}
+  {{- with $ann }}
   annotations:
-    {{- range $key, $value := .Values.ingress.annotations }}
+    {{- range $key, $value := . }}
     {{ $key }}: {{ $value | quote }}
     {{- end }}
-    {{- range $key, $value := .Values.ingress.extraAnnotations }}
-    {{ $key }}: {{ $value | quote }}
-    {{- end }}
+  {{- end }}
 spec:
   {{- with .Values.ingress.className }}
   ingressClassName: {{ . }}

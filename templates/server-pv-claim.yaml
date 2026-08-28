@@ -8,6 +8,10 @@ metadata:
   name: {{ include "ansibleforms.server.pvcName" . }}
   labels:
     {{- include "ansibleforms.server.labels" . | nindent 4 }}
+  {{- with (include "ansibleforms.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 spec:
   accessModes:
     - {{ $server.accessMode | default "ReadWriteMany" }}

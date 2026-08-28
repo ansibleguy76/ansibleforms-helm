@@ -12,6 +12,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ansibleforms.mysql.labels" . | nindent 4 }}
+  {{- with (include "ansibleforms.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 data:
   init.sql: |
     -- The bundled server starts with a root account restricted to localhost,

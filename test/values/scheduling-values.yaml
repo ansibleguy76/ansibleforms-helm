@@ -1,0 +1,83 @@
+---
+# Everything the scheduling block can express, on both components at once.
+# Render only: the nodeSelector and the PriorityClass below do not exist on a CI
+# cluster on purpose, since what this file is for is proving the values land in
+# the right place in the pod spec, not that they schedule.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+commonLabels:
+  team: platform
+  cost-center: '4711'
+
+commonAnnotations:
+  example.com/owner: platform@example.com
+
+imagePullSecrets:
+  - name: regcred
+
+containers:
+  server:
+    podLabels:
+      role: frontend
+    podAnnotations:
+      example.com/scrape: 'true'
+    nodeSelector:
+      disktype: ssd
+    tolerations:
+      - key: workload
+        operator: Equal
+        value: apps
+        effect: NoSchedule
+    affinity:
+      nodeAffinity:
+        requiredDuringSchedulingIgnoredDuringExecution:
+          nodeSelectorTerms:
+            - matchExpressions:
+                - key: kubernetes.io/arch
+                  operator: In
+                  values: [amd64]
+    topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app.kubernetes.io/component: server
+    priorityClassName: high-priority
+    serviceAccountName: ansibleforms
+  mysql:
+    podLabels:
+      role: database
+    nodeSelector:
+      disktype: ssd
+    tolerations:
+      - key: storage
+        operator: Exists
+        effect: NoSchedule
+    priorityClassName: high-priority
+    # A different registry for this image alone, overriding the release wide one
+    imagePullSecrets:
+      - name: mysql-regcred
+
+ingress:
+  enabled: true
+  hostname: ansibleforms.ci.example.com
+  tls:
+    enabled: false
+
+storages:
+  mysql:
+    size: 1Gi
+    accessMode: ReadWriteOnce
+  server:
+    size: 1Gi
+    accessMode: ReadWriteOnce

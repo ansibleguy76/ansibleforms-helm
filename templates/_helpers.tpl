@@ -79,13 +79,70 @@
 {{- $secrets.existingSecret | default (printf "%s-secrets" (include "ansibleforms.fullname" .)) -}}
 {{- end -}}
 
-{{- /* Labels shared by everything the chart creates. */}}
+{{- /*
+  Labels shared by everything the chart creates, commonLabels included. They go
+  on the metadata of every object and on the pod template, but never on a
+  selector: a Deployment selector is immutable, so a label added there could
+  never be changed or removed again.
+*/}}
 {{- define "ansibleforms.labels" -}}
 helm.sh/chart: {{ include "ansibleforms.chart" . }}
 app.kubernetes.io/part-of: {{ include "ansibleforms.name" . }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
+{{- end }}
+{{- with .Values.commonLabels }}
+{{ toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- /*
+  commonAnnotations, for everything the chart creates. Empty by default, and
+  `with` on the result skips the annotations key entirely when there is nothing
+  to write, so an object that had no annotations still renders without one.
+*/}}
+{{- define "ansibleforms.annotations" -}}
+{{- with .Values.commonAnnotations }}
+{{- toYaml . }}
+{{- end }}
+{{- end -}}
+
+{{- /*
+  Pod level scheduling, shared by both Deployments. Reads its settings from the
+  component passed in as .component, with .root carrying the top of the chart so
+  the release wide imagePullSecrets is still reachable.
+*/}}
+{{- define "ansibleforms.podScheduling" -}}
+{{- $c := .component | default dict -}}
+{{- /*
+  indent 2 on every block, including the lists. A sequence written at the same
+  column as its key is valid YAML and looks fine, but a mapping written that way
+  is not: nodeSelector came out empty and its contents became sibling keys of
+  the pod spec. Indenting everything the same way removes the difference.
+*/}}
+{{- with ($c.imagePullSecrets | default .root.Values.imagePullSecrets) }}
+imagePullSecrets:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- with $c.nodeSelector }}
+nodeSelector:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- with $c.tolerations }}
+tolerations:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- with $c.affinity }}
+affinity:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- with $c.topologySpreadConstraints }}
+topologySpreadConstraints:
+{{ toYaml . | indent 2 }}
+{{- end }}
+{{- with $c.priorityClassName }}
+priorityClassName: {{ . }}
 {{- end }}
 {{- end -}}
 

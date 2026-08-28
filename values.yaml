@@ -13,6 +13,39 @@ nameOverride: ''
 fullnameOverride: ''
 
 # ------------------------------------------------------------------------------
+# LABELS AND ANNOTATIONS FOR EVERYTHING
+# ------------------------------------------------------------------------------
+# Added to every object the chart creates, and to both pods. Useful for cost
+# tags, ownership, Argo CD tracking, backup selectors and the like.
+#
+# commonLabels never reach a Deployment's selector. A selector is immutable
+# once the Deployment exists, so a label added there could never be changed or
+# removed again, and an existing release would fail to upgrade outright.
+commonLabels: {}
+#   team: platform
+#   cost-center: "4711"
+
+commonAnnotations: {}
+#   example.com/owner: platform@example.com
+
+# ------------------------------------------------------------------------------
+# PULLING THE IMAGES
+# ------------------------------------------------------------------------------
+# Secrets used to pull both images, for a private registry or a mirror. The
+# Secrets have to exist in the release namespace already, the chart does not
+# create them:
+#
+#   kubectl -n <namespace> create secret docker-registry regcred \
+#     --docker-server=registry.example.com \
+#     --docker-username=... --docker-password=...
+#
+# Override per component with containers.server.imagePullSecrets or
+# containers.mysql.imagePullSecrets when the two images live in different
+# registries.
+imagePullSecrets: []
+#   - name: regcred
+
+# ------------------------------------------------------------------------------
 # MYSQL DEPLOYMENT
 # ------------------------------------------------------------------------------
 # Whether the chart deploys its own MySQL. Turn it off to point AnsibleForms at
@@ -64,6 +97,30 @@ containers:
 # ~~~~
 
   mysql:
+    # ---------------------------------------------------
+    # WHERE THIS POD IS ALLOWED TO RUN
+    # ---------------------------------------------------
+    # Plain Kubernetes, passed through as written. All optional and all empty
+    # by default, so nothing changes unless you set them. The database is the
+    # half that owns a volume, so this is usually the one that needs pinning
+    # to whatever node its storage lives on.
+    nodeSelector: {}
+    #   kubernetes.io/hostname: node-1
+    tolerations: []
+    #   - key: node-role.kubernetes.io/control-plane
+    #     operator: Exists
+    #     effect: NoSchedule
+    affinity: {}
+    topologySpreadConstraints: []
+    priorityClassName: ''
+    # Extra labels and annotations on the pod only, on top of commonLabels.
+    podLabels: {}
+    podAnnotations: {}
+    # Overrides the release wide imagePullSecrets for this image alone.
+    imagePullSecrets: []
+    # The chart does not create a ServiceAccount. Name one you manage yourself.
+    serviceAccountName: ''
+
     # Pinned on purpose. A floating tag means an unattended major upgrade the
     # next time the pod is rescheduled, and MySQL does not support downgrades,
     # so a rollback would leave the data directory unreadable.
@@ -92,6 +149,39 @@ containers:
     # Written into the pod template, so changing them triggers a rollout. Handy
     # for a checksum annotation when the forms ConfigMap changes.
     podAnnotations: {}
+
+    # Extra labels on the pod only, on top of commonLabels.
+    podLabels: {}
+
+    # ---------------------------------------------------
+    # WHERE THIS POD IS ALLOWED TO RUN
+    # ---------------------------------------------------
+    # Plain Kubernetes, passed through as written. All optional and all empty
+    # by default, so nothing changes unless you set them.
+    nodeSelector: {}
+    #   kubernetes.io/hostname: node-1
+    tolerations: []
+    #   - key: workload
+    #     operator: Equal
+    #     value: apps
+    #     effect: NoSchedule
+    affinity: {}
+    #   nodeAffinity:
+    #     requiredDuringSchedulingIgnoredDuringExecution:
+    #       nodeSelectorTerms:
+    #         - matchExpressions:
+    #             - key: kubernetes.io/arch
+    #               operator: In
+    #               values: [amd64]
+    topologySpreadConstraints: []
+    priorityClassName: ''
+
+    # Overrides the release wide imagePullSecrets for this image alone.
+    imagePullSecrets: []
+
+    # The chart does not create a ServiceAccount. Name one you manage yourself,
+    # otherwise the namespace's "default" is used.
+    serviceAccountName: ''
 
     # A terminal on a server process is not useful and keeps stdin open.
     stdin: false

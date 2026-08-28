@@ -44,6 +44,10 @@ metadata:
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "ansibleforms.server.labels" . | nindent 4 }}
+  {{- with (include "ansibleforms.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: {{ $server.replicas | default 1 }}
   {{- /* The selector is immutable on an existing Deployment, leave it alone */}}
@@ -58,12 +62,21 @@ spec:
     metadata:
       labels:
         {{- include "ansibleforms.server.labels" . | nindent 8 }}
-      {{- with $server.podAnnotations }}
+        {{- with $server.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- /* podAnnotations wins over commonAnnotations on a clash */}}
+      {{- $podAnn := merge (dict) ($server.podAnnotations | default dict) (.Values.commonAnnotations | default dict) }}
+      {{- with $podAnn }}
       annotations:
-{{ toYaml . | nindent 8 }}
+        {{- toYaml . | nindent 8 }}
       {{- end }}
     spec:
       serviceAccountName: {{ $server.serviceAccountName | default "default" }}
+
+      {{- with (include "ansibleforms.podScheduling" (dict "component" $server "root" $)) }}
+      {{- . | nindent 6 }}
+      {{- end }}
 
       {{- /*
         The app listens on 80 or 443. Both are privileged ports, the container
