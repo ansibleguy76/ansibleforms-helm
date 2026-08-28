@@ -664,6 +664,62 @@ kubectl logs -l app.kubernetes.io/component=server
 kubectl logs -l app.kubernetes.io/component=database
 ```
 
+## Pod Security Standards
+
+The chart installs as it is into a namespace enforcing the **restricted** Pod
+Security Standard, which is the strictest of the three and the default on
+several managed distributions:
+
+```bash
+kubectl create namespace ansibleforms
+kubectl label namespace ansibleforms \
+  pod-security.kubernetes.io/enforce=restricted \
+  pod-security.kubernetes.io/enforce-version=latest
+helm install ansibleforms ansibleforms/ansibleforms -n ansibleforms -f my_values.yaml
+```
+
+Both pods run as a pinned non-root user, the server as 1000 and MySQL as 999,
+with `seccompProfile: RuntimeDefault`, every capability dropped and privilege
+escalation refused. The server keeps `NET_BIND_SERVICE` and the
+`net.ipv4.ip_unprivileged_port_start` sysctl, both of which restricted permits,
+which is how it goes on listening on port 80 or 443.
+
+There is no init container. Earlier versions shipped one that ran as **root**
+purely to `chown` the server's volume;
+`containers.server.podSecurityContext.fsGroup` asks the kubelet to do that
+instead, which is cheaper and is the only form restricted accepts.
+
+### If your storage ignores fsGroup
+
+NFS with `root_squash` is the usual case. Clear both security contexts and put
+the init container back:
+
+```yaml
+containers:
+  server:
+    podSecurityContext: null
+    securityContext: null
+    initContainers:
+      - name: prepare-persistent-volume
+        image: ansibleguy/ansibleforms:6.2.1
+        command: ["sh", "-c", "chown -R 1000:1000 /app/dist/persistent"]
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+          - name: server-persistent-storage
+            mountPath: /app/dist/persistent
+  mysql:
+    podSecurityContext: null
+    securityContext: null
+```
+
+`null`, not `{}`. Helm merges your values file over the chart's own, so an empty
+map leaves the defaults exactly where they were. And the two contexts go
+together: clearing only the pod one sends MySQL back to starting as root and
+stepping down with `setgid`, which the container context still forbids, and it
+CrashLoops with `setgid: Operation not permitted`. The chart refuses to render
+that combination rather than let you find out the hard way.
+
 ## Security Best Practices
 
 - Prefer `secrets.existingSecret` over putting passwords in a values file

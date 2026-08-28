@@ -1,0 +1,19 @@
+---
+# Half of the escape hatch. Clearing the pod security context alone sends MySQL
+# back to starting as root and stepping down with setgid, which the container
+# context still forbids, and it dies with "setgid: Operation not permitted" on
+# a loop. The two belong together, so the chart says so rather than letting it
+# CrashLoop.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  mysql:
+    podSecurityContext: null

@@ -222,12 +222,38 @@ containers:
     extraVolumeMounts: []
     initContainers: []
 
-    # Empty by default. The official image starts as root and steps down to the
-    # mysql user itself once it has taken ownership of the data directory, so
-    # forcing runAsNonRoot breaks a first boot. Set these when you know the
-    # volume already has the right ownership.
-    podSecurityContext: {}
-    securityContext: {}
+    # ---------------------------------------------------
+    # SECURITY CONTEXT
+    # ---------------------------------------------------
+    # These defaults satisfy the restricted Pod Security Standard, which several
+    # managed distributions now enforce by default and which the chart used to
+    # fail outright.
+    #
+    # The image normally starts as root only to take ownership of the data
+    # directory and then steps down to uid 999. fsGroup makes the kubelet do
+    # that instead, so the container never needs to be root at all.
+    # OnRootMismatch means the ownership pass is skipped when the top of the
+    # volume already looks right, which keeps a restart cheap on a large
+    # database and leaves a volume from an older release alone: the old
+    # entrypoint already chowned it to 999:999.
+    #
+    # To go back to no pod security context at all, which is what a volume on
+    # NFS with root_squash may need, set the whole map to null. Not to {}: Helm
+    # merges your values file over this one, and an empty map merges to exactly
+    # what is written here. Only null removes a key.
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 999
+      runAsGroup: 999
+      fsGroup: 999
+      fsGroupChangePolicy: OnRootMismatch
+      seccompProfile:
+        type: RuntimeDefault
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - ALL
 
 # ~~~~
 
@@ -297,18 +323,40 @@ containers:
       requests:
         cpu: '1'
         memory: 1024Mi
-    initContainers:
-      - name: prepare-persistent-volume
-        image: ansibleguy/ansibleforms:6.2.1
-        imagePullPolicy: IfNotPresent
-        # This command changes the ownership of the specified directory.
-        command: ["sh", "-c", "chown -R 1000:1000 /app/dist/persistent"]
-        securityContext:
-          # The container must run as the root user to have permission to chown.
-          runAsUser: 0
-        volumeMounts:
-          - name: server-persistent-storage
-            mountPath: /app/dist/persistent
+    # There used to be a "prepare-persistent-volume" init container here that ran
+    # as root purely to chown the volume to 1000:1000. podSecurityContext.fsGroup
+    # below now asks the kubelet to do the same thing, which is both cheaper and
+    # the only way the pod can run where the restricted Pod Security Standard is
+    # enforced: a container with runAsUser 0 is refused outright there.
+    #
+    # Put it back only if your storage ignores fsGroup, and know that doing so
+    # gives up on the restricted standard.
+    initContainers: []
+
+    # ---------------------------------------------------
+    # SECURITY CONTEXT
+    # ---------------------------------------------------
+    # Pod level, so it covers the container and anything you add to
+    # initContainers. Together with the container level context the chart sets
+    # further down, this is what makes the release installable in a namespace
+    # with pod-security.kubernetes.io/enforce=restricted.
+    #
+    # sysctls are added by the chart when bindPrivilegedPorts is on, and are
+    # left alone if you set your own here. net.ipv4.ip_unprivileged_port_start
+    # is on the kubelet's safe list and is permitted under restricted, which is
+    # what lets the application keep listening on 80 or 443.
+    #
+    # To go back to no pod security context at all, set the whole map to null.
+    # Not to {}: Helm merges your values file over this one, and an empty map
+    # merges to exactly what is written here. Only null removes a key.
+    podSecurityContext:
+      runAsNonRoot: true
+      runAsUser: 1000
+      runAsGroup: 1000
+      fsGroup: 1000
+      fsGroupChangePolicy: OnRootMismatch
+      seccompProfile:
+        type: RuntimeDefault
 
   # ------------------------------------------------------------------------------
   # LIVENESS / READINESS CONFIGURATION

@@ -204,3 +204,64 @@ app.kubernetes.io/component: database
 {{- $mysql := ((.Values.applications | default dict).mysql | default dict) -}}
 {{- $mysql.host | default (include "ansibleforms.mysql.fullname" .) -}}
 {{- end -}}
+
+{{- /*
+  A root init container and runAsNonRoot cannot both be true.
+
+  The chart used to ship a "prepare-persistent-volume" init container running as
+  root purely to chown the volume, and fsGroup does that job now. Anyone
+  upgrading with their own copy of values.yaml still has it, and the combination
+  fails in a way that is hard to read: helm reports the release as deployed and
+  the pod sits in Init:CreateContainerConfigError with
+
+    Error: container's runAsUser breaks non-root policy
+
+  Better to refuse the render and say which value to change.
+
+  hasKey rather than a default: runAsUser 0 is exactly the value that `default`
+  treats as absent, so the obvious spelling of this check never fires.
+*/}}
+{{- define "ansibleforms.assertNoRootInitContainer" -}}
+{{- $c := .component | default dict -}}
+{{- $key := .key -}}
+{{- $podSec := ($c.podSecurityContext | default dict) -}}
+{{- if $podSec.runAsNonRoot -}}
+{{- range ($c.initContainers | default list) -}}
+{{- $sc := (.securityContext | default dict) -}}
+{{- if and (hasKey $sc "runAsUser") (eq (toString $sc.runAsUser) "0") -}}
+{{- fail (printf "\n\ncontainers.%s.initContainers has \"%s\" running as root (runAsUser: 0), while containers.%s.podSecurityContext sets runAsNonRoot: true.\n\nThe kubelet refuses that combination outright and the pod never starts.\n\nThe chart no longer ships that init container. containers.%s.podSecurityContext.fsGroup asks the kubelet to take ownership of the volume instead, which is cheaper and is the only form the restricted Pod Security Standard accepts. Drop it from your values.\n\nIf your storage ignores fsGroup and you really need the chown, set containers.%s.podSecurityContext to null and keep the init container. It has to be null rather than {}, because Helm merges your values over the chart's own and an empty map changes nothing. The release will then not be installable where restricted is enforced.\n" $key .name $key $key $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+
+{{- /*
+  The container security context and the pod one are a matched pair.
+
+  containers.mysql.securityContext drops every capability and forbids privilege
+  escalation, which is only safe because the pod already runs as uid 999. Clear
+  the pod context alone and the image goes back to starting as root and dropping
+  to the mysql user with setgid, which those very settings block:
+
+    [ERROR] [Server] setgid: Operation not permitted
+    [ERROR] [Server] Aborting
+
+  A CrashLoopBackOff with that buried in the log is a bad afternoon, so refuse
+  the render and name both values.
+
+  The server is not caught by this and should not be: its container context
+  establishes uid 1000 on its own, so it never needs to step down from root.
+*/}}
+{{- define "ansibleforms.assertSecurityContextsAgree" -}}
+{{- $c := .component | default dict -}}
+{{- $key := .key -}}
+{{- $pod := ($c.podSecurityContext | default dict) -}}
+{{- $ctr := ($c.securityContext | default dict) -}}
+{{- $restricted := or (eq (toString (dig "allowPrivilegeEscalation" true $ctr)) "false") (has "ALL" (dig "capabilities" "drop" (list) $ctr)) -}}
+{{- $nonRoot := or $pod.runAsNonRoot $ctr.runAsNonRoot -}}
+{{- if and (hasKey $pod "runAsUser") (ne (toString $pod.runAsUser) "0") -}}{{- $nonRoot = true -}}{{- end -}}
+{{- if and (hasKey $ctr "runAsUser") (ne (toString $ctr.runAsUser) "0") -}}{{- $nonRoot = true -}}{{- end -}}
+{{- if and $restricted (not $nonRoot) -}}
+{{- fail (printf "\n\ncontainers.%s.securityContext drops capabilities or forbids privilege escalation, but nothing makes the pod run as a non-root user.\n\nThe image starts as root and steps down to its own user with setgid, and those settings block exactly that. The container starts and dies with \"setgid: Operation not permitted\", over and over.\n\nThe two contexts belong together. Either keep both as the chart ships them, or clear both: set containers.%s.securityContext to null as well as containers.%s.podSecurityContext.\n" $key $key $key) -}}
+{{- end -}}
+{{- end -}}

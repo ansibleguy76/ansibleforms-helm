@@ -82,6 +82,31 @@ jobs:
           }
           echo "Placeholder credentials are refused, with a message pointing at the fix."
 
+      # Two ways of configuring the security contexts that cannot work, and that
+      # fail at runtime in ways nobody would connect back to a values file: one
+      # leaves the pod in Init:CreateContainerConfigError while helm reports the
+      # release as deployed, the other CrashLoops MySQL with "setgid: Operation
+      # not permitted". The chart refuses both at render time instead. Assert it
+      # still does, and that the message names the value to change.
+      - name: Combinations the chart must refuse
+        run: |
+          set -euo pipefail
+          for f in test/values/refused/*-values.yaml; do
+            echo "::group::$f"
+            if helm template refused . --values "$f" >/dev/null 2>&1; then
+              echo "::error::$f rendered. It is supposed to be refused."
+              exit 1
+            fi
+            out="$(helm template refused . --values "$f" 2>&1 || true)"
+            echo "$out" | grep -q "podSecurityContext" || {
+              echo "::error::$f is refused, but the message does not name podSecurityContext."
+              echo "$out" | tail -5
+              exit 1
+            }
+            echo "$out" | sed -n '2,6p'
+            echo "::endgroup::"
+          done
+
       - name: helm lint
         run: |
           for f in ci/*-values.yaml test/values/*-values.yaml; do
@@ -475,6 +500,50 @@ jobs:
           done
           echo "The two releases are fully independent."
           helm uninstall blue green --namespace side-by-side
+
+      # The restricted Pod Security Standard is enforced by default on several
+      # managed distributions, and until 6.2.5 this chart could not be installed
+      # under it at all: the MySQL container had no security context and the
+      # server had an init container running as root to chown its volume.
+      # Labelling the namespace makes the API server the judge, so this passes
+      # only if every pod the chart creates is genuinely acceptable.
+      - name: Install where the restricted Pod Security Standard is enforced
+        run: |
+          set -euo pipefail
+          kubectl create namespace restricted
+          kubectl label namespace restricted \
+            pod-security.kubernetes.io/enforce=restricted \
+            pod-security.kubernetes.io/enforce-version=latest
+          # A plain pod is refused here, which is the point of the label
+          if kubectl -n restricted run canary --image=busybox --restart=Never \
+               --command -- true 2>/dev/null; then
+            echo "::error::The namespace is not actually enforcing restricted."
+            exit 1
+          fi
+          echo "A pod with no security context is refused here, as expected."
+
+          helm install restricted . \
+            --namespace restricted \
+            --values ci/no-ingress-values.yaml \
+            --wait --timeout 12m
+          kubectl -n restricted get pods
+
+          # Non-root, both of them, and no init container left behind
+          for c in server database; do
+            pod="$(kubectl -n restricted get pod -l "app.kubernetes.io/component=$c" \
+                     -o jsonpath='{.items[0].metadata.name}')"
+            uid="$(kubectl -n restricted get pod "$pod" \
+                     -o jsonpath='{.spec.securityContext.runAsUser}')"
+            echo "$c runs as uid $uid"
+            [ -n "$uid" ] && [ "$uid" != "0" ] || {
+              echo "::error::$c is not pinned to a non-root uid."; exit 1; }
+          done
+          if kubectl -n restricted get deploy -l app.kubernetes.io/component=server \
+               -o jsonpath='{.items[0].spec.template.spec.initContainers}' | grep -q .; then
+            echo "::error::The server still has an init container. The root chown was supposed to go."
+            exit 1
+          fi
+          helm uninstall restricted --namespace restricted
 
       - name: Dump cluster state on failure
         if: failure()

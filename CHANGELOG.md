@@ -1,5 +1,69 @@
 # Changelog
 
+## 6.2.5
+
+The chart could not be installed at all in a namespace enforcing the restricted
+Pod Security Standard, which several managed distributions turn on by default.
+It can now, and does so out of the box.
+
+This changes how both pods run. Read the upgrade note before running it.
+
+### Changed
+
+- **Both pods run as a non-root user, pinned.** The server as 1000 and MySQL as
+  999, with `seccompProfile: RuntimeDefault`, every capability dropped, and
+  privilege escalation refused. MySQL had no security context of any kind
+  before.
+
+- **The root init container is gone.** `prepare-persistent-volume` existed only
+  to `chown -R 1000:1000` the server's volume, and ran as root to do it, which
+  the restricted standard forbids outright.
+  `containers.server.podSecurityContext.fsGroup` asks the kubelet to take
+  ownership instead. That is cheaper, since `fsGroupChangePolicy:
+  OnRootMismatch` skips the pass entirely when the top of the volume already
+  looks right, and it removes a privileged container from every install.
+
+### Added
+
+- **`containers.server.podSecurityContext` and `containers.mysql.podSecurityContext`,**
+  carrying the defaults above. The sysctl that lets the application bind port 80
+  or 443 is still added by the chart and is left alone if you write your own
+  `sysctls`.
+
+- **Two configurations the chart now refuses to render**, because both fail at
+  runtime in a way that is very hard to trace back to a values file:
+
+  - an init container running as root next to `runAsNonRoot: true`. The kubelet
+    rejects it with `container's runAsUser breaks non-root policy` and the pod
+    sits in `Init:CreateContainerConfigError` while Helm reports the release as
+    deployed.
+  - a cleared pod security context with the container one left in place. MySQL
+    goes back to starting as root and stepping down with `setgid`, which the
+    dropped capabilities forbid, and it dies with `setgid: Operation not
+    permitted` on a loop.
+
+  Both now stop at `helm template` with a message naming the value to change.
+
+### Upgrading
+
+Nothing to do for most people. Upgrading an existing release was checked against
+one holding real data: both claims kept their volume, the rows and the generated
+SSH key survived, and the kubelet moved the volume ownership from `root` to the
+right group on the way through.
+
+Two cases need attention:
+
+- **You keep your own copy of `values.yaml`.** It still contains the
+  `prepare-persistent-volume` init container, and that combination is refused.
+  Delete it from your values; `fsGroup` does its job now.
+
+- **Your storage ignores `fsGroup`.** NFS with `root_squash` is the usual case.
+  Set both `containers.<component>.podSecurityContext` and
+  `containers.<component>.securityContext` to `null` and put the init container
+  back. It has to be `null` rather than `{}`: Helm merges your values over the
+  chart's own, and an empty map changes nothing. The release is then not
+  installable where restricted is enforced, which is the trade.
+
 ## 6.2.4
 
 The MySQL half of the chart brought up to the standard of the server half. It
