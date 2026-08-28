@@ -15,10 +15,50 @@ for f in ci/*-values.yaml test/values/*-values.yaml; do
 done
 ```
 
-`ci/*-values.yaml` are the scenarios CI actually installs on a kind cluster.
-`test/values/*-values.yaml` are render-only scenarios, for combinations that
-cannot be installed unattended, such as HTTPS mode, which needs port 443 and a
-capability the pod security context drops.
+`ci/*-values.yaml` are the scenarios `ct` installs on a kind cluster.
+`test/values/*-values.yaml` are mostly render-only, for combinations that cannot
+be installed unattended or that only exist to prove a manifest is shaped right.
+Some of them are driven by hand from the workflow: the two `ingress-*` files are
+installed behind a real controller, and `minimal-mysql` exists to prove the
+chart still renders with its values cleared.
+
+## What CI checks
+
+Four jobs, three of which need a cluster:
+
+**Lint and render.** yamllint, `helm lint` on every values file, and `helm
+template` plus `kubeconform -strict` across three Kubernetes versions. On top of
+that a few assertions that rendering alone would not make:
+
+- the chart refuses to write the placeholder credentials into a real Secret
+- every Ingress backend resolves to a port its Service actually publishes,
+  followed the way a controller would follow it
+- every scheduling value comes out in the pod spec unchanged, `commonLabels` and
+  `commonAnnotations` reach every object, and neither reaches a selector, which
+  is immutable
+- the MySQL probes exist and none of them carries a credential
+- the chart version moved, if anything under `Chart.yaml`, `values.yaml`,
+  `templates/` or `files/` did
+
+**Install on kind.** `ct install` for the `ci/` scenarios, plus the three cases
+a values file alone cannot describe: a Secret managed outside the chart, a
+database the chart does not manage, and two releases side by side in one
+namespace.
+
+**Upgrade a live release.** Installs the newest published chart, writes a row
+into the database and a file onto the server's volume, upgrades to the branch,
+and checks that every claim still points at the same volume and that both
+markers are still there. This is the one that catches a renamed
+PersistentVolumeClaim, which every other check in the file would happily let
+through: a renamed claim is an empty volume with the old one deleted underneath
+it.
+
+**Route through a real ingress controller.** kind ships without one, so the
+Ingress used to be rendered, validated and never asked for a single page. This
+installs ingress-nginx and fetches the application through it, both plain and
+with the application terminating TLS itself. That second case is where the port
+bug fixed in 6.2.2 lived: a manifest that validates perfectly and that no
+controller can route.
 
 To try a real install:
 
@@ -48,6 +88,13 @@ kept in lockstep: a fix to a template does not need a new application release.
 Anything that renames a resource, removes a value or forces an existing
 Deployment to be recreated is a major bump, and belongs in `CHANGELOG.md` with
 the steps an operator has to take.
+
+CI refuses a pull request that changes `Chart.yaml`, `values.yaml`, `templates/`
+or `files/` without moving the version, and refuses a version that has already
+been released. Both would merge green and publish nothing, leaving the change on
+`main` until some later release dragged it along. Changes that do not reach the
+packaged chart, to CI, to `test/` or to the documentation, need no bump; `ci/`
+and `test/` are in `.helmignore`.
 
 ## Repository settings this depends on
 
