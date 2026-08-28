@@ -519,6 +519,17 @@ Changing it does not restart the pod by itself. A ConfigMap update is picked up
 on the next restart, so roll the Deployment yourself or put a checksum in
 `containers.mysql.podAnnotations` and let Helm do it.
 
+One consequence worth knowing about if you ever open a shell in the MySQL pod:
+because the image's own `my.cnf` is replaced, the socket path the `mysql` client
+looks for and the one the server opens do not necessarily agree, and which way
+it falls depends on the image underneath. Connect over TCP and it is the same
+every time, which is how AnsibleForms connects and how the probes check:
+
+```bash
+kubectl exec deploy/<release>-mysql -- \
+  mysql -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" -e "SHOW DATABASES;"
+```
+
 ### Health checks
 
 MySQL gets a startup, a readiness and a liveness probe, all running

@@ -1,0 +1,40 @@
+---
+# The same thing with the application terminating TLS itself, so it listens on
+# 443 and the Service moves with it. This is the shape that used to render an
+# Ingress pointing at port 80 against a Service that only published 443, which
+# ingress-nginx answers with a 503.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 1
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  mysql:
+    resources:
+      limits: {cpu: '1', memory: 1024Mi}
+      requests: {cpu: 100m, memory: 256Mi}
+  server:
+    resources:
+      limits: {cpu: '1', memory: 1024Mi}
+      requests: {cpu: 100m, memory: 256Mi}
+
+ingress:
+  enabled: true
+  className: nginx
+  hostname: ansibleforms.ci.example.com
+  tls:
+    enabled: false
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+    # The controller has to be told to speak TLS to the backend as well
+    nginx.ingress.kubernetes.io/backend-protocol: HTTPS
+
+storages:
+  mysql: {size: 1Gi, accessMode: ReadWriteOnce}
+  server: {size: 1Gi, accessMode: ReadWriteOnce}

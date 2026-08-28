@@ -18,7 +18,11 @@ jobs:
     name: Lint and render
     runs-on: ubuntu-latest
     steps:
+      # Full history: the version check below reads Chart.yaml from the base
+      # branch to see whether the version moved.
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: azure/setup-helm@v4
         with:
@@ -28,6 +32,39 @@ jobs:
         run: |
           pip install --quiet yamllint
           yamllint --strict .
+
+      # Publishing is driven by the version in Chart.yaml, and the release
+      # workflow does nothing when the tag already exists. So a pull request that
+      # changes a template without bumping the version merges green, publishes
+      # nothing, and says nothing: the change sits on main and no one finds out
+      # until the next release drags it along.
+      - name: The chart version must move when the chart does
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          changed="$(git diff --name-only "$BASE" HEAD -- Chart.yaml values.yaml templates files)"
+          if [ -z "$changed" ]; then
+            echo "Nothing under Chart.yaml, values.yaml, templates/ or files/ changed here."
+            exit 0
+          fi
+          echo "Chart files this pull request touches:"
+          echo "$changed" | sed 's/^/  /'
+          before="$(git show "$BASE:Chart.yaml" | awk '/^version:/ {print $2}')"
+          after="$(awk '/^version:/ {print $2}' Chart.yaml)"
+          echo "base branch: $before"
+          echo "this branch: $after"
+          if [ "$before" = "$after" ]; then
+            echo "::error::The chart changed but Chart.yaml still says $after. Bump it, or the merge publishes nothing at all."
+            exit 1
+          fi
+          if gh release view "v${after}" >/dev/null 2>&1; then
+            echo "::error::v${after} is already released. Pick a version that has not been published, or the release job will skip this one."
+            exit 1
+          fi
+          echo "Version moved from $before to $after and $after is unreleased."
 
       # Rendering with nothing but the defaults has to FAIL: values.yaml ships
       # placeholder credentials, and writing <ENTER_PASSWORD_HERE> into a real
@@ -446,3 +483,204 @@ jobs:
           kubectl describe pods --all-namespaces
           kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/component=server --all-namespaces || true
           kubectl logs --all-containers --tail=200 --selector app.kubernetes.io/component=database --all-namespaces || true
+
+  # Every release so far has been an upgrade risk, and nothing here ever ran
+  # helm upgrade: the whole suite installs from scratch. A chart that renames a
+  # PersistentVolumeClaim passes every other check in this file while quietly
+  # provisioning an empty volume and deleting the one holding the data.
+  upgrade:
+    name: Upgrade a live release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - uses: helm/kind-action@v1
+        with:
+          node_image: kindest/node:v1.31.0
+
+      - name: Install the published chart, put data in it, then upgrade to this one
+        run: |
+          set -euo pipefail
+
+          NS=upgrade
+          helm repo add ansibleforms https://ansibleguy76.github.io/ansibleforms-helm/ >/dev/null
+          helm repo update >/dev/null
+
+          # The newest version on the chart repository, which is whatever main published
+          # last. The version in Chart.yaml on this branch is not there yet.
+          PREV="$(helm search repo ansibleforms/ansibleforms -o json |
+                  python3 -c 'import json,sys; print(json.load(sys.stdin)[0]["version"])')"
+          HERE="$(helm show chart . | awk '/^version:/ {print $2}')"
+          echo "Upgrading a live $PREV release to $HERE"
+
+          kubectl create namespace "$NS"
+          helm install upg ansibleforms/ansibleforms --version "$PREV" \
+            --namespace "$NS" --values ci/no-ingress-values.yaml --wait --timeout 12m
+
+          MYSQL="$(kubectl -n "$NS" get deploy -l app.kubernetes.io/component=database -o name | head -1)"
+          SERVER="$(kubectl -n "$NS" get deploy -l app.kubernetes.io/component=server -o name | head -1)"
+          echo "Found $MYSQL and $SERVER"
+
+          # Something in the database and something on the server's volume, so the check
+          # afterwards is about data rather than about objects existing.
+          #
+          # Over TCP, not the unix socket. The chart mounts its own /etc/mysql/my.cnf over
+          # the one the image ships, so the socket path the client looks for and the one
+          # the server opens do not necessarily agree, and which way it falls depends on
+          # the image layer underneath. TCP is how AnsibleForms connects and how the probe
+          # checks, so it is the only path worth relying on here.
+          kubectl -n "$NS" exec "$MYSQL" -- sh -c 'mysql -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" -e "
+            USE AnsibleForms;
+            CREATE TABLE IF NOT EXISTS upgrade_marker (note varchar(64));
+            DELETE FROM upgrade_marker;
+            INSERT INTO upgrade_marker VALUES (\"written-before-the-upgrade\");"'
+          kubectl -n "$NS" exec "$SERVER" -c server -- \
+            sh -c 'echo written-before-the-upgrade > /app/dist/persistent/upgrade-marker.txt'
+
+          kubectl -n "$NS" get pvc -o json > /tmp/pvc-before.json
+
+          helm upgrade upg . --namespace "$NS" --values ci/no-ingress-values.yaml --wait --timeout 12m
+
+          kubectl -n "$NS" get pvc -o json > /tmp/pvc-after.json
+
+          # The claims have to be the same claims bound to the same volumes. A renamed PVC
+          # does not move a volume, it provisions an empty one and deletes the old, and
+          # every check below this line would still pass while the data was gone.
+          python3 - <<'PY'
+          import json, sys
+
+          def claims(path):
+              return {i["metadata"]["name"]: i["spec"]["volumeName"]
+                      for i in json.load(open(path))["items"]}
+
+          before, after = claims("/tmp/pvc-before.json"), claims("/tmp/pvc-after.json")
+          print("before:", before)
+          print("after :", after)
+          if before != after:
+              lost = {k: v for k, v in before.items() if after.get(k) != v}
+              sys.exit(f"::error::The upgrade moved storage. These claims changed or "
+                       f"disappeared: {lost}. A renamed or reprovisioned claim is an empty "
+                       f"volume with the old one deleted underneath it.")
+          print("Every claim still points at the volume it pointed at before.")
+          PY
+
+          MYSQL="$(kubectl -n "$NS" get deploy -l app.kubernetes.io/component=database -o name | head -1)"
+          SERVER="$(kubectl -n "$NS" get deploy -l app.kubernetes.io/component=server -o name | head -1)"
+
+          row="$(kubectl -n "$NS" exec "$MYSQL" -- sh -c \
+            'mysql -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "USE AnsibleForms; SELECT note FROM upgrade_marker;"' \
+            2>/dev/null | tr -d '\r')"
+          [ "$row" = "written-before-the-upgrade" ] || {
+            echo "::error::The row written before the upgrade is gone. Got: '$row'"; exit 1; }
+
+          file="$(kubectl -n "$NS" exec "$SERVER" -c server -- \
+            cat /app/dist/persistent/upgrade-marker.txt 2>/dev/null | tr -d '\r')"
+          [ "$file" = "written-before-the-upgrade" ] || {
+            echo "::error::The file written before the upgrade is gone. Got: '$file'"; exit 1; }
+
+          # And it still works afterwards, not merely survives
+          svc="$(kubectl -n "$NS" get svc -l app.kubernetes.io/component=server -o jsonpath='{.items[0].metadata.name}')"
+          kubectl -n "$NS" run curl-upgrade --rm -i --restart=Never --image=curlimages/curl:8.10.1 --quiet -- \
+            curl -sf -o /dev/null "http://${svc}.${NS}.svc.cluster.local/" || {
+            echo "::error::The application does not answer after the upgrade."; exit 1; }
+
+          echo "Data and storage survived the upgrade from $PREV to $HERE, and the app answers."
+      - name: Dump cluster state on failure
+        if: failure()
+        run: |
+          kubectl -n upgrade get all,pvc || true
+          kubectl -n upgrade describe pods || true
+          kubectl -n upgrade logs --all-containers --tail=200 \
+            --selector app.kubernetes.io/component=server || true
+
+  # kind has no ingress controller, so until now the Ingress was rendered,
+  # validated against the schema and never asked for a single page. The port bug
+  # fixed in 6.2.2 lived exactly there: a manifest that validates perfectly and
+  # that no controller can route.
+  ingress:
+    name: Route through a real ingress controller
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - uses: helm/kind-action@v1
+        with:
+          node_image: kindest/node:v1.31.0
+
+      # ClusterIP and a port-forward rather than the kind specific hostPort
+      # deployment, so this needs nothing special from the cluster. The
+      # admission webhook is off because it adds a minute and catches nothing
+      # that helm lint has not already.
+      - name: Install ingress-nginx
+        run: |
+          set -euo pipefail
+          helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
+          helm repo update
+          helm install ingress-nginx ingress-nginx/ingress-nginx \
+            --namespace ingress-nginx --create-namespace \
+            --set controller.service.type=ClusterIP \
+            --set controller.admissionWebhooks.enabled=false \
+            --set controller.watchIngressWithoutClass=true \
+            --wait --timeout 8m
+
+      - name: Ask for the page, plain and with the application terminating TLS
+        run: |
+          set -euo pipefail
+
+          check() {
+            ns="$1"; values="$2"; host="$3"
+            echo "::group::$values through a real ingress-nginx"
+            kubectl create namespace "$ns"
+            helm install ing . --namespace "$ns" --values "$values" --wait --timeout 12m >/dev/null
+
+            kubectl -n "$ns" get ingress -o jsonpath='{range .items[*]}  backend: {.spec.rules[0].http.paths[0].backend.service}{"\n"}{end}'
+            kubectl -n "$ns" get svc -l app.kubernetes.io/component=server -o jsonpath='{range .items[*]}  service: {.spec.ports}{"\n"}{end}'
+
+            # The controller needs a moment to pick the Ingress up and reload
+            for i in $(seq 1 30); do
+              code="$(curl -s -o /dev/null -w '%{http_code}' -H "Host: $host" \
+                        --max-time 10 http://127.0.0.1:8080/ || echo 000)"
+              [ "$code" = "200" ] && break
+              sleep 4
+            done
+
+            body="$(curl -s -H "Host: $host" --max-time 10 http://127.0.0.1:8080/ || true)"
+            echo "  HTTP $code"
+            if [ "$code" != "200" ]; then
+              echo "::error::$values is not reachable through the ingress, got $code."
+              kubectl -n "$ns" get ingress,svc,endpointslices
+              kubectl -n ingress-nginx logs deployment/ingress-nginx-controller --tail=40
+              exit 1
+            fi
+            case "$body" in
+              *"Ansible Forms"*) echo "  the page served is AnsibleForms" ;;
+              *) echo "::error::Something answered 200 but it was not the application."; exit 1 ;;
+            esac
+            helm uninstall ing --namespace "$ns" >/dev/null
+            kubectl delete namespace "$ns" --wait=false >/dev/null
+            echo "::endgroup::"
+          }
+
+          kubectl -n ingress-nginx port-forward svc/ingress-nginx-controller 8080:80 >/dev/null 2>&1 &
+          PF=$!
+          trap 'kill $PF 2>/dev/null || true' EXIT
+          sleep 3
+
+          check ing-http  test/values/ingress-http-values.yaml  ansibleforms.ci.example.com
+          check ing-https test/values/ingress-https-values.yaml ansibleforms.ci.example.com
+          echo "Both the plain and the TLS backend answer through a real ingress controller."
+
+
+      - name: Dump cluster state on failure
+        if: failure()
+        run: |
+          kubectl get ingress -A || true
+          kubectl -n ingress-nginx logs deployment/ingress-nginx-controller --tail=100 || true
