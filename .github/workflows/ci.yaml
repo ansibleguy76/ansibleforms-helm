@@ -527,7 +527,13 @@ jobs:
 
           # Something in the database and something on the server's volume, so the check
           # afterwards is about data rather than about objects existing.
-          kubectl -n "$NS" exec "$MYSQL" -- sh -c 'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -e "
+          #
+          # Over TCP, not the unix socket. The chart mounts its own /etc/mysql/my.cnf over
+          # the one the image ships, so the socket path the client looks for and the one
+          # the server opens do not necessarily agree, and which way it falls depends on
+          # the image layer underneath. TCP is how AnsibleForms connects and how the probe
+          # checks, so it is the only path worth relying on here.
+          kubectl -n "$NS" exec "$MYSQL" -- sh -c 'mysql -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" -e "
             USE AnsibleForms;
             CREATE TABLE IF NOT EXISTS upgrade_marker (note varchar(64));
             DELETE FROM upgrade_marker;
@@ -566,7 +572,7 @@ jobs:
           SERVER="$(kubectl -n "$NS" get deploy -l app.kubernetes.io/component=server -o name | head -1)"
 
           row="$(kubectl -n "$NS" exec "$MYSQL" -- sh -c \
-            'mysql -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "USE AnsibleForms; SELECT note FROM upgrade_marker;"' \
+            'mysql -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "USE AnsibleForms; SELECT note FROM upgrade_marker;"' \
             2>/dev/null | tr -d '\r')"
           [ "$row" = "written-before-the-upgrade" ] || {
             echo "::error::The row written before the upgrade is gone. Got: '$row'"; exit 1; }
@@ -583,8 +589,6 @@ jobs:
             echo "::error::The application does not answer after the upgrade."; exit 1; }
 
           echo "Data and storage survived the upgrade from $PREV to $HERE, and the app answers."
-
-
       - name: Dump cluster state on failure
         if: failure()
         run: |
