@@ -1,5 +1,63 @@
 # Changelog
 
+## 6.2.4
+
+The MySQL half of the chart brought up to the standard of the server half. It
+had no health checks of any kind, no way to tune the database, and a render
+that fell over if you cleared its resources. Everything here is additive and
+the defaults render what 6.2.3 rendered, except for the three new probes.
+
+### Added
+
+- **Health checks for MySQL.** A startup probe, a readiness probe and a
+  liveness probe, all running `mysqladmin ping`. Without a readiness probe the
+  Service advertised a ready endpoint the moment the container started, while
+  MySQL was still refusing connections: measured on an empty data directory
+  that window is about ten seconds, and it grows with the size of the volume.
+  It does not make AnsibleForms start any sooner, since it retries either way.
+  What changes is that readiness stops lying, so `helm --wait`, Argo CD health
+  and anything else treating the database as a dependency work from something
+  true.
+
+  The liveness probe is deliberately slack, 90 seconds of silence before it
+  acts, because restarting a database that was merely busy is worse than leaving
+  it alone. Set `containers.mysql.liveness.enabled` to false if you would rather
+  nothing ever restarted it. The startup probe holds the other two back for up
+  to 300 seconds while the data directory is created and the init script runs.
+
+  The probe needs no credentials. `mysqladmin ping` exits 0 as soon as the
+  server answers, and it answers "access denied" long before it would answer a
+  query, so the root password never reaches a command line where every `ps` in
+  the container could read it. A plain TCP check would not do: while the data
+  directory is being built the entrypoint runs a temporary server on a socket
+  with networking off, so a port check calls MySQL ready long before it is.
+  Override the whole thing with `containers.mysql.probeCommand`.
+
+- **`mysql.config`.** The `my.cnf` the chart mounts was a bare `[mysqld]` header
+  with nothing under it and no way to change it, so tuning the bundled database
+  meant forking the chart. The default is still that same empty header.
+
+  It is mounted over `/etc/mysql/my.cnf`, replacing the file the image ships
+  rather than adding to it. On the official image that file is little more than
+  an `!includedir` pointing at `/etc/mysql/conf.d`, so what is given up is the
+  ability to drop extra files in there, not any tuning of its own.
+
+- **The extras the server already had**, now on MySQL too: `extraEnv`,
+  `extraEnvFrom`, `extraVolumes`, `extraVolumeMounts`, `imagePullPolicy`,
+  `securityContext` and `podSecurityContext`. The security contexts are empty by
+  default: the official image starts as root and steps down to the mysql user
+  once it has taken ownership of the data directory, so forcing `runAsNonRoot`
+  breaks a first boot.
+
+### Fixed
+
+- **Clearing the MySQL resources no longer fails the render.** The template
+  reached straight into `containers.mysql.resources.limits.cpu`, so
+  `--set containers.mysql.resources=null` or a values file that nulls the block
+  died with `nil pointer evaluating interface {}.limits` instead of falling back
+  to a default. Every value the MySQL template reads now goes through a default,
+  which is how the server template already worked.
+
 ## 6.2.3
 
 Where the pods are allowed to run, and how to label everything the chart

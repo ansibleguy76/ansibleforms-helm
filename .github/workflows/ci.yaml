@@ -191,6 +191,60 @@ jobs:
                 f"on all {len(docs)} objects.")
           PY
 
+      # MySQL had no probes at all, so the Service advertised an endpoint the
+      # moment the container started, long before the server accepted a
+      # connection. The three probes below all run mysqladmin ping, which needs
+      # no credentials: it answers "access denied" well before it would answer a
+      # query, and that is the signal wanted. Assert both halves of that, since
+      # the obvious way to write this probe puts the root password on a command
+      # line where every ps in the container can read it.
+      - name: MySQL probes exist and carry no credentials
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import glob, re, subprocess, sys, yaml
+
+          failures = []
+          for values in sorted(glob.glob("ci/*-values.yaml") + glob.glob("test/values/*-values.yaml")):
+              out = subprocess.run(
+                  ["helm", "template", "probecheck", ".", "--values", values],
+                  capture_output=True, text=True, check=True).stdout
+              docs = [d for d in yaml.safe_load_all(out) if d]
+              mysql = [d for d in docs
+                       if d["kind"] == "Deployment"
+                       and d["metadata"]["name"] == "probecheck-mysql"]
+              if not mysql:
+                  print(f"{values}: no bundled MySQL, skipped")
+                  continue
+
+              container = mysql[0]["spec"]["template"]["spec"]["containers"][0]
+              cfg = (yaml.safe_load(open(values)) or {}).get("containers", {}).get("mysql") or {}
+
+              for probe in ("startupProbe", "readinessProbe", "livenessProbe"):
+                  key = probe.replace("Probe", "")
+                  wanted = (cfg.get(key) or {}).get("enabled", True)
+                  present = probe in container
+                  if wanted and not present:
+                      failures.append(f"{values}: {probe} is missing")
+                  if not wanted and present:
+                      failures.append(f"{values}: {probe} is set but values disabled it")
+                  if not present:
+                      continue
+                  command = " ".join(container[probe]["exec"]["command"])
+                  # -pSECRET or --password=..., and any expansion of the two env
+                  # vars holding the root password. The negative lookbehind is
+                  # what keeps --protocol=TCP from matching -p.
+                  if re.search(r"(?<!-)-p\S|--password|\$\{?(MYSQL_ROOT_PASSWORD|DB_PASSWORD)",
+                               command):
+                      failures.append(f"{values}: {probe} command looks like it "
+                                      f"passes a credential: {command!r}")
+              print(f"{values}: probes ok")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit("::error::MySQL probes are wrong.")
+          PY
+
       - name: Install kubeconform
         run: |
           curl -sSLo /tmp/kubeconform.tar.gz \

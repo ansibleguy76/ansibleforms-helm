@@ -1,0 +1,27 @@
+---
+# The MySQL block cleared out, which is how the nil pointer is reached. Helm
+# merges a user's file over the chart's own values.yaml, so simply leaving keys
+# out is not enough: the chart's defaults come back. Setting them to null is,
+# and that is what the two empty keys below do.
+#
+# On 6.2.3 and earlier this fails the render outright with "nil pointer
+# evaluating interface {}.limits", because the MySQL template reached straight
+# into resources.limits.cpu rather than falling back to a default the way the
+# server half already did.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  mysql:
+    resources:
+    startup:
+
+ingress:
+  enabled: false

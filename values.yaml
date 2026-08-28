@@ -58,6 +58,27 @@ imagePullSecrets: []
 mysql:
   enabled: true
 
+  # The my.cnf of the bundled database. Mounted over /etc/mysql/my.cnf, which
+  # replaces the file the image ships instead of adding to it. On the official
+  # image that file is little more than an !includedir pointing at
+  # /etc/mysql/conf.d, so what you give up is the ability to drop extra files
+  # in there, not any tuning of its own.
+  #
+  # The default is the bare header the chart has always mounted. Anything under
+  # [mysqld] goes here:
+  #
+  #   config: |
+  #     [mysqld]
+  #     max_allowed_packet = 64M
+  #     character-set-server = utf8mb4
+  #     collation-server = utf8mb4_unicode_ci
+  #
+  # Changing this does not restart the pod on its own. A ConfigMap update is
+  # picked up on the next restart, so roll it yourself, or put a checksum in
+  # containers.mysql.podAnnotations so Helm does it for you.
+  config: |
+    [mysqld]
+
 applications:
 
   # MYSQL CONFIGURATION
@@ -126,6 +147,7 @@ containers:
     # so a rollback would leave the data directory unreadable.
     # Already running a 9.x image? Set this to your current tag before upgrading.
     image: mysql:8.4
+    imagePullPolicy: IfNotPresent
     resources:
       limits:
         cpu: '2'
@@ -133,6 +155,79 @@ containers:
       requests:
         cpu: '0.5'
         memory: 512Mi
+
+    # ---------------------------------------------------
+    # HEALTH CHECKS
+    # ---------------------------------------------------
+    # All three run the same command. mysqladmin ping exits 0 as soon as the
+    # server answers, and it answers "access denied" long before it would answer
+    # a query, which is the signal wanted here: the port is open and the server
+    # is talking. No credentials are needed for that, so the root password never
+    # reaches a command line where every ps in the container would show it.
+    #
+    # A plain TCP check would not do. While the data directory is being created
+    # the entrypoint runs a temporary server on a socket with networking off, so
+    # a port check calls MySQL ready long before it is.
+    probeCommand: []
+    #   - sh
+    #   - -c
+    #   - mysqladmin ping -h 127.0.0.1 --protocol=TCP --silent
+
+    # Holds the other two back while the data directory is created and the init
+    # script runs, which on a first boot takes far longer than a healthy server
+    # ever will. failureThreshold x periodSeconds is the budget, 300s here.
+    startup:
+      enabled: true
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 30
+
+    # Without this the Service advertised a ready endpoint the moment the
+    # container started, while MySQL was still refusing connections. Measured on
+    # an empty data directory that window is about ten seconds, and it grows
+    # with the size of the volume and the init script.
+    #
+    # It does not make AnsibleForms start any faster. The server retries either
+    # way, and it actually logs a few more "connect ECONNREFUSED" lines while
+    # the Service has no endpoint at all. What changes is that everything which
+    # reads readiness now tells the truth: helm --wait, Argo CD health, and
+    # anything else that treats the database as a dependency.
+    readiness:
+      enabled: true
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+
+    # Deliberately slack. Restarting a database because it was busy is worse
+    # than leaving it alone, so this only fires after 90s of no answer, and only
+    # once the startup probe has already succeeded. Set enabled to false if you
+    # would rather it never restarted the database at all.
+    liveness:
+      enabled: true
+      initialDelaySeconds: 15
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+
+    # ---------------------------------------------------
+    # EXTRAS, same shape as the server further down
+    # ---------------------------------------------------
+    extraEnv: []
+    #   - name: MYSQL_INITDB_SKIP_TZINFO
+    #     value: "1"
+    extraEnvFrom: []
+    extraVolumes: []
+    extraVolumeMounts: []
+    initContainers: []
+
+    # Empty by default. The official image starts as root and steps down to the
+    # mysql user itself once it has taken ownership of the data directory, so
+    # forcing runAsNonRoot breaks a first boot. Set these when you know the
+    # volume already has the right ownership.
+    podSecurityContext: {}
+    securityContext: {}
 
 # ~~~~
 
