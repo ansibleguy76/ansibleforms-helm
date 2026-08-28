@@ -1,0 +1,66 @@
+---
+# The other end of the same scale: every MySQL knob at once.
+mysql:
+  enabled: true
+  config: |
+    [mysqld]
+    max_allowed_packet = 64M
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_unicode_ci
+    innodb_buffer_pool_size = 512M
+
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  mysql:
+    image: mysql:8.4
+    imagePullPolicy: Always
+    resources:
+      limits:
+        cpu: '1'
+        memory: 1024Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    startup:
+      enabled: true
+      failureThreshold: 60
+    readiness:
+      enabled: true
+      periodSeconds: 5
+    # Some people would rather nothing ever restarted the database
+    liveness:
+      enabled: false
+    extraEnv:
+      - name: MYSQL_INITDB_SKIP_TZINFO
+        value: '1'
+    securityContext:
+      allowPrivilegeEscalation: false
+  server:
+    resources:
+      limits:
+        cpu: '1'
+        memory: 1024Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+ingress:
+  enabled: false
+
+storages:
+  mysql:
+    size: 1Gi
+    accessMode: ReadWriteOnce
+  server:
+    size: 1Gi
+    accessMode: ReadWriteOnce

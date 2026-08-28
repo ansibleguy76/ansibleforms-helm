@@ -494,6 +494,60 @@ spec:
 Leave `HTTPS: 0` if you would rather have the ingress controller terminate TLS
 and talk plain HTTP inside the cluster, which is what most people want.
 
+## Tuning the bundled MySQL
+
+`mysql.config` is the `my.cnf` the chart mounts. It defaults to a bare
+`[mysqld]` header, which is what the chart has always mounted:
+
+```yaml
+mysql:
+  enabled: true
+  config: |
+    [mysqld]
+    max_allowed_packet = 64M
+    character-set-server = utf8mb4
+    collation-server = utf8mb4_unicode_ci
+    innodb_buffer_pool_size = 512M
+```
+
+It is mounted over `/etc/mysql/my.cnf`, which replaces the file the image ships
+rather than adding to it. On the official image that file is little more than an
+`!includedir` pointing at `/etc/mysql/conf.d`, so what you give up is the
+ability to drop extra files in there, not any tuning of its own.
+
+Changing it does not restart the pod by itself. A ConfigMap update is picked up
+on the next restart, so roll the Deployment yourself or put a checksum in
+`containers.mysql.podAnnotations` and let Helm do it.
+
+### Health checks
+
+MySQL gets a startup, a readiness and a liveness probe, all running
+`mysqladmin ping`, all configurable under `containers.mysql`:
+
+```yaml
+containers:
+  mysql:
+    startup:
+      enabled: true
+      failureThreshold: 30   # x periodSeconds is the budget for a first boot
+    readiness:
+      enabled: true
+    liveness:
+      # Set to false if you would rather nothing ever restarted the database
+      enabled: true
+```
+
+The liveness probe is deliberately slack, 90 seconds of silence before it acts,
+because restarting a database that was merely busy is worse than leaving it
+alone. The startup probe holds the other two back while the data directory is
+created and the init script runs.
+
+The probe needs no credentials, and that is on purpose. `mysqladmin ping` exits
+0 as soon as the server answers, and it answers "access denied" long before it
+would answer a query, so the root password never has to appear on a command
+line where every `ps` in the container could read it. Replace the command with
+`containers.mysql.probeCommand` if you want something else.
+
 ## Where the pods run
 
 `nodeSelector`, `tolerations`, `affinity`, `topologySpreadConstraints` and

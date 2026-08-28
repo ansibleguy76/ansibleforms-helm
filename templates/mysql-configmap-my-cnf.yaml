@@ -1,4 +1,15 @@
 {{- if dig "enabled" true (.Values.mysql | default dict) }}
+{{- /*
+  Mounted at /etc/mysql/my.cnf with subPath, which replaces the file the image
+  ships rather than adding to it. On the official image that file is little more
+  than an !includedir pointing at /etc/mysql/conf.d, so what is lost is the
+  ability to drop extra files in there, not any actual tuning.
+
+  It used to be a bare [mysqld] header with nothing under it and no way to
+  change it, so tuning the bundled database meant forking the chart. The default
+  below is still that same empty header, so an existing release renders exactly
+  what it rendered before.
+*/}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -12,5 +23,5 @@ metadata:
   {{- end }}
 data:
   my.cnf: |
-    [mysqld]
+{{ dig "config" "[mysqld]\n" (.Values.mysql | default dict) | indent 4 }}
 {{- end }}
