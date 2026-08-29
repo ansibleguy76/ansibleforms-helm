@@ -27,7 +27,7 @@ chart still renders with its values cleared.
 Four jobs, three of which need a cluster:
 
 **Lint and render.** yamllint, `helm lint` on every values file, and `helm
-template` plus `kubeconform -strict` across three Kubernetes versions. On top of
+template` plus `kubeconform -strict` across four Kubernetes versions. On top of
 that a few assertions that rendering alone would not make:
 
 - the chart refuses to write the placeholder credentials into a real Secret
@@ -49,11 +49,14 @@ below it: a misspelling at the top is silent and sometimes dangerous, while a
 stray key further down is usually someone's own leftover and should not block
 their upgrade.
 
-**Install on kind.** `ct install` for the `ci/` scenarios, which also runs
-`helm test` after each one, plus the cases a values file alone cannot describe:
-a Secret managed outside the chart, a database the chart does not manage, two
-releases side by side in one namespace, and an install into a namespace
-enforcing the restricted Pod Security Standard.
+**Install on kind.** Runs three times, on Kubernetes 1.31, 1.33 and 1.35.
+Rendering and installing catch different things: `kubeconform` reads a schema,
+while an install is where a probe, a security context or a storage default meets
+an actual kubelet. Each run does `ct install` for the `ci/` scenarios, which
+also runs `helm test` after each one, plus the cases a values file alone cannot
+describe: a Secret managed outside the chart, a database the chart does not
+manage, two releases side by side in one namespace, and an install into a
+namespace enforcing the restricted Pod Security Standard.
 
 **Upgrade a live release.** Installs the newest published chart, writes a row
 into the database and a file onto the server's volume, upgrades to the branch,
@@ -62,6 +65,12 @@ markers are still there. This is the one that catches a renamed
 PersistentVolumeClaim, which every other check in the file would happily let
 through: a renamed claim is an empty volume with the old one deleted underneath
 it.
+
+It then runs the same upgrade a second time and compares the pod names, because
+a rollout checksum that moves when nothing changed would churn both pods on
+every release. Finally it rolls the release back to the published version it
+started from and checks the storage and the data again, walking the whole change
+backwards.
 
 **Route through a real ingress controller.** kind ships without one, so the
 Ingress used to be rendered, validated and never asked for a single page. This

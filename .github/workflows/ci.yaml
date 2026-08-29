@@ -380,7 +380,7 @@ jobs:
           mkdir -p rendered
           for f in ci/*-values.yaml test/values/*-values.yaml; do
             name="$(basename "$f" -values.yaml)"
-            for kube in 1.29.0 1.31.0 1.33.0; do
+            for kube in 1.29.14 1.31.14 1.33.12 1.35.8; do
               echo "::group::$name on Kubernetes $kube"
               helm template ansibleforms . \
                 --values "$f" \
@@ -411,9 +411,17 @@ jobs:
           path: rendered/
           retention-days: 7
 
+  # Rendering has always covered several Kubernetes versions; installing
+  # covered exactly one. The two catch different things: kubeconform reads a
+  # schema, while an install is where a probe, a security context or a storage
+  # default meets an actual kubelet.
   install:
-    name: Install on kind
+    name: Install on kind ${{ matrix.kubernetes }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        kubernetes: [v1.31.14, v1.33.12, v1.35.8]
     steps:
       - uses: actions/checkout@v4
         with:
@@ -431,7 +439,7 @@ jobs:
 
       - uses: helm/kind-action@v1
         with:
-          node_image: kindest/node:v1.31.0
+          node_image: kindest/node:${{ matrix.kubernetes }}
 
       # ct installs the chart once per ci/*-values.yaml file and waits for every
       # pod to become ready, so a broken probe or a bad default fails here.
@@ -632,7 +640,7 @@ jobs:
 
       - uses: helm/kind-action@v1
         with:
-          node_image: kindest/node:v1.31.0
+          node_image: kindest/node:v1.33.12
 
       - name: Install the published chart, put data in it, then upgrade to this one
         run: |
@@ -735,6 +743,40 @@ jobs:
             exit 1
           fi
           echo "An upgrade with nothing changed leaves both pods alone."
+
+          # Rolling back is the other half of upgrading, and nothing here ever
+          # tried it. Revision 1 is the published chart this started from, so
+          # this walks the whole change backwards, security contexts, volume
+          # ownership and all.
+          echo "Rolling back to revision 1, which is $PREV"
+          helm rollback upg 1 --namespace "$NS" --wait --timeout 12m
+
+          kubectl -n "$NS" get pvc -o json > /tmp/pvc-rollback.json
+          python3 - <<'PY'
+          import json, sys
+
+          def claims(path):
+              return {i["metadata"]["name"]: i["spec"]["volumeName"]
+                      for i in json.load(open(path))["items"]}
+
+          before, after = claims("/tmp/pvc-before.json"), claims("/tmp/pvc-rollback.json")
+          if before != after:
+              sys.exit(f"::error::The rollback moved storage. Was {before}, now {after}.")
+          print("The rollback left every claim on the volume it started on.")
+          PY
+
+          MYSQL="$(kubectl -n "$NS" get deploy -l app.kubernetes.io/component=database -o name | head -1)"
+          row="$(kubectl -n "$NS" exec "$MYSQL" -- sh -c \
+            'mysql -h 127.0.0.1 --protocol=TCP -uroot -p"$MYSQL_ROOT_PASSWORD" -N -e "USE AnsibleForms; SELECT note FROM upgrade_marker;"' \
+            2>/dev/null | tr -d '\r')"
+          [ "$row" = "written-before-the-upgrade" ] || {
+            echo "::error::The row is gone after the rollback. Got: '$row'"; exit 1; }
+
+          kubectl -n "$NS" run curl-rollback --rm -i --restart=Never --image=curlimages/curl:8.10.1 --quiet -- \
+            curl -sf -o /dev/null "http://${svc}.${NS}.svc.cluster.local/" || {
+            echo "::error::The application does not answer after the rollback."; exit 1; }
+
+          echo "Rolled back to $PREV with the data intact and the app answering."
       - name: Dump cluster state on failure
         if: failure()
         run: |
@@ -759,7 +801,7 @@ jobs:
 
       - uses: helm/kind-action@v1
         with:
-          node_image: kindest/node:v1.31.0
+          node_image: kindest/node:v1.33.12
 
       # ClusterIP and a port-forward rather than the kind specific hostPort
       # deployment, so this needs nothing special from the cluster. The
