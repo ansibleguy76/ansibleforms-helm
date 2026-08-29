@@ -543,6 +543,13 @@ jobs:
             echo "::error::The server still has an init container. The root chown was supposed to go."
             exit 1
           fi
+
+          # The chart's own test pod has to be acceptable here too. ct already
+          # runs helm test after its installs, but not in a namespace that
+          # enforces anything, so a test pod the API server refuses would only
+          # show up in front of a user.
+          helm test restricted --namespace restricted --logs
+
           helm uninstall restricted --namespace restricted
 
       - name: Dump cluster state on failure

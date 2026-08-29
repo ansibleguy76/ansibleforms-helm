@@ -450,6 +450,31 @@ forms:
     name: ''
 
 # ------------------------------------------------------------------------------
+# HELM TEST
+# ------------------------------------------------------------------------------
+# The pod `helm test` runs. It fetches the front page through the Service and
+# checks the page is really AnsibleForms rather than something else answering
+# 200, then opens a connection to the database. `ct install` runs it in CI after
+# every install.
+#
+# It carries the same security context as the rest of the chart, so it is
+# accepted where the restricted Pod Security Standard is enforced. A test pod
+# the namespace refuses would fail `helm test` for a reason that has nothing to
+# do with the release.
+tests:
+  enabled: true
+  image: curlimages/curl:8.10.1
+  # The uid the image already runs as. Change it with the image.
+  runAsUser: 100
+  runAsGroup: 100
+  # The test pod is scheduled like anything else, so on a cluster where the
+  # nodes are tainted it needs to be told the same things the other two are.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  imagePullSecrets: []
+
+# ------------------------------------------------------------------------------
 # SECRETS
 # ------------------------------------------------------------------------------
 # By default the chart creates a Secret named <release>-secrets from the values

@@ -1,0 +1,110 @@
+{{- $tests := (.Values.tests | default dict) }}
+{{- if dig "enabled" true $tests }}
+{{- $scheme := lower (include "ansibleforms.server.scheme" .) }}
+{{- $host := printf "%s.%s.svc.cluster.local" (include "ansibleforms.server.fullname" .) .Release.Namespace }}
+{{- $url := printf "%s://%s:%s/" $scheme $host (include "ansibleforms.server.port" .) }}
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "ansibleforms.fullname" . }}-test-connection
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ansibleforms.labels" . | nindent 4 }}
+    app.kubernetes.io/name: {{ include "ansibleforms.name" . }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    {{- /*
+      before-hook-creation only, deliberately. Adding hook-succeeded removes the
+      pod the moment it passes, and `helm test --logs` then fails with "pods
+      not found" on a run that actually worked. Left alone, the pod stays until
+      the next `helm test` replaces it, so its output can be read either way.
+    */}}
+    helm.sh/hook-delete-policy: before-hook-creation
+    {{- with (include "ansibleforms.annotations" .) }}
+    {{- . | nindent 4 }}
+    {{- end }}
+spec:
+  restartPolicy: Never
+  {{- with (include "ansibleforms.podScheduling" (dict "component" ($tests) "root" $)) }}
+  {{- . | nindent 2 }}
+  {{- end }}
+  {{- /*
+    The chart itself installs under the restricted Pod Security Standard, so its
+    own test has to as well. A test pod that the namespace refuses would make
+    helm test fail for a reason that has nothing to do with the release.
+  */}}
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: {{ dig "runAsUser" 100 $tests }}
+    runAsGroup: {{ dig "runAsGroup" 100 $tests }}
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: test
+      image: {{ dig "image" "curlimages/curl:8.10.1" $tests }}
+      imagePullPolicy: IfNotPresent
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop:
+            - ALL
+      resources:
+        limits:
+          cpu: 100m
+          memory: 64Mi
+        requests:
+          cpu: 10m
+          memory: 16Mi
+      command:
+        - sh
+        - -c
+        - |
+          set -eu
+
+          echo "Asking {{ $url }} for the front page"
+          code="$(curl -sk -o /tmp/body -w '%{http_code}' --max-time 20 '{{ $url }}')"
+          echo "  HTTP $code"
+          [ "$code" = "200" ] || {
+            echo "The server answered $code, not 200."
+            head -20 /tmp/body
+            exit 1
+          }
+
+          {{- /*
+            Ready is not enough on its own. The front page is static, so the pod
+            answers 200 with a database it cannot reach behind it, which is the
+            failure mode people actually hit. Look at what came back.
+          */}}
+          grep -qi 'ansible *forms' /tmp/body || {
+            echo "Something answered 200, but it was not AnsibleForms."
+            head -20 /tmp/body
+            exit 1
+          }
+          echo "  the page is AnsibleForms"
+          {{- if dig "enabled" true (.Values.mysql | default dict) }}
+
+          {{- /*
+            curl is the only client in this image, and it does not speak MySQL.
+            It does not have to: what matters is whether the TCP connection is
+            accepted, and the exit code says so on its own. Measured against
+            this very chart, 7 is "couldn't connect" and 6 is "couldn't
+            resolve", while an open port answering something curl cannot parse
+            gives 1. So anything other than 6 or 7 means the connection was
+            established, which is the question being asked.
+          */}}
+          db='{{ include "ansibleforms.mysql.host" . }}:{{ dig "port" "3306" ((.Values.applications | default dict).mysql | default dict) }}'
+          echo "Connecting to $db"
+          rc=0
+          curl -s --max-time 10 --connect-timeout 10 "http://${db}" \
+            >/dev/null 2>&1 </dev/null || rc=$?
+          case "$rc" in
+            6) echo "  $db does not resolve."; exit 1 ;;
+            7) echo "  nothing is accepting connections on $db."; exit 1 ;;
+            *) echo "  the database accepts connections (curl exit $rc)" ;;
+          esac
+          {{- end }}
+
+          echo "OK"
+{{- end }}

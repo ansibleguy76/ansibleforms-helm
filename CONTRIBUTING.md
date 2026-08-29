@@ -39,11 +39,21 @@ that a few assertions that rendering alone would not make:
 - the MySQL probes exist and none of them carries a credential
 - the chart version moved, if anything under `Chart.yaml`, `values.yaml`,
   `templates/` or `files/` did
+- the two security context combinations that cannot work are still refused, and
+  the message still names the value to change
 
-**Install on kind.** `ct install` for the `ci/` scenarios, plus the three cases
-a values file alone cannot describe: a Secret managed outside the chart, a
-database the chart does not manage, and two releases side by side in one
-namespace.
+`values.schema.json` is checked by Helm itself on every render and every
+install, so a wrong type or a misspelled top level key fails before anything
+reaches a cluster. It is deliberately strict at the top level and permissive
+below it: a misspelling at the top is silent and sometimes dangerous, while a
+stray key further down is usually someone's own leftover and should not block
+their upgrade.
+
+**Install on kind.** `ct install` for the `ci/` scenarios, which also runs
+`helm test` after each one, plus the cases a values file alone cannot describe:
+a Secret managed outside the chart, a database the chart does not manage, two
+releases side by side in one namespace, and an install into a namespace
+enforcing the restricted Pod Security Standard.
 
 **Upgrade a live release.** Installs the newest published chart, writes a row
 into the database and a file onto the server's volume, upgrades to the branch,

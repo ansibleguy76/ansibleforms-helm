@@ -1,5 +1,52 @@
 # Changelog
 
+## 6.2.6
+
+Three things a published chart is expected to have and this one did not: a
+values schema, a NOTES output, and a test.
+
+### Added
+
+- **`values.schema.json`.** Helm checks it on every render and every install, so
+  a wrong type or a misspelled key fails before anything reaches a cluster
+  rather than showing up as a puzzling manifest later.
+
+  It is strict at the top level and permissive below it, on purpose. A
+  misspelling at the top is silent and sometimes dangerous: `stroages:` simply
+  does nothing, and `mysql_deployment.enabled`, which was renamed in 6.2.1,
+  leaves you believing the database is disabled while the chart deploys it
+  anyway. Both are now refused by name. Further down, a stray key is usually
+  somebody's own leftover and blocking their upgrade over it would be rude, so
+  only types and enumerations are checked there.
+
+  `global` is allowed, since Helm puts it in every chart's values whether or not
+  anything reads it.
+
+- **`templates/NOTES.txt`.** After an install it prints the URL, or the
+  `port-forward` to reach a ClusterIP, or where to watch for a LoadBalancer
+  address; the admin username and the command to read the password out of the
+  Secret rather than the password itself; and a reminder that credentials taken
+  from a values file also sit in the release history Helm keeps in the cluster.
+  It says so when `ingress.hostname` is still the placeholder, when HTTPS mode
+  needs the ingress controller told to speak TLS to the backend, and when
+  `mysql.enabled` is false and the schema has to be applied by hand.
+
+- **`helm test`.** A pod that fetches the front page through the Service and
+  checks what came back really is AnsibleForms, then opens a connection to the
+  database. Both halves matter: the front page is static, so the server answers
+  200 perfectly happily with a database it cannot reach behind it, which is the
+  failure people actually hit. Verified by scaling MySQL to zero, where the page
+  still returns 200 and the test fails on the database.
+
+  The test pod carries the same security context as the rest of the chart, so it
+  is accepted where the restricted Pod Security Standard is enforced. Its
+  delete policy is `before-hook-creation` alone: adding `hook-succeeded` removes
+  the pod the moment it passes and `helm test --logs` then fails with "pods not
+  found" on a run that worked.
+
+  Turn it off with `tests.enabled: false`. `ct install` runs it in CI after
+  every install, and CI also runs it inside the restricted namespace.
+
 ## 6.2.5
 
 The chart could not be installed at all in a namespace enforcing the restricted

@@ -664,6 +664,55 @@ kubectl logs -l app.kubernetes.io/component=server
 kubectl logs -l app.kubernetes.io/component=database
 ```
 
+## Checking an install
+
+The chart ships a `helm test`:
+
+```bash
+helm test ansibleforms --namespace ansibleforms --logs
+```
+
+```
+Asking http://ansibleforms-server.ansibleforms.svc.cluster.local:80/ for the front page
+  HTTP 200
+  the page is AnsibleForms
+Connecting to ansibleforms-mysql:3306
+  the database accepts connections (curl exit 1)
+OK
+```
+
+It checks both halves on purpose. The front page is static, so the server
+answers 200 quite happily with a database it cannot reach behind it, which is
+the failure people actually run into. The test pod runs with the same security
+context as the rest of the chart, so it works where the restricted Pod Security
+Standard is enforced. `tests.enabled: false` turns it off.
+
+## Values are validated
+
+`values.schema.json` is checked by Helm on every render and every install, so a
+mistake fails before anything reaches the cluster:
+
+```
+Error: values don't meet the specifications of the schema(s)
+- at '/storages/mysql/accessMode': value must be one of 'ReadWriteOnce',
+  'ReadOnlyMany', 'ReadWriteMany', 'ReadWriteOncePod'
+```
+
+The top level is closed, so a misspelling there is caught rather than silently
+ignored:
+
+```
+- at '': additional properties 'stroages' not allowed
+```
+
+That also catches `mysql_deployment.enabled`, renamed to `mysql.enabled` in
+6.2.1, which otherwise leaves you believing the database is disabled while the
+chart deploys it anyway.
+
+Below the top level the schema only checks types and enumerations, and lets
+unknown keys through, so a values file carrying somebody's own leftover keeps
+working across an upgrade.
+
 ## Pod Security Standards
 
 The chart installs as it is into a namespace enforcing the **restricted** Pod
