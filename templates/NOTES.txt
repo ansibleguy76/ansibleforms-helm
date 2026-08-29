@@ -1,0 +1,54 @@
+{{- $https := eq (include "ansibleforms.server.https" .) "true" -}}
+{{- $svc := include "ansibleforms.server.fullname" . -}}
+{{- $scheme := lower (include "ansibleforms.server.scheme" .) -}}
+{{- $secretName := include "ansibleforms.secretName" . -}}
+AnsibleForms {{ .Chart.AppVersion }} is installed as {{ .Release.Name }} in namespace {{ .Release.Namespace }}.
+
+Reaching it
+{{ if .Values.ingress.enabled }}
+  {{ $scheme }}://{{ .Values.ingress.hostname }}{{ .Values.ingress.path }}
+{{- if eq (.Values.ingress.hostname | toString) "<YOUR INGRESS URL>" }}
+
+  That is still the placeholder from values.yaml. Set ingress.hostname to a name
+  that resolves to your ingress controller, or nothing will route.
+{{- end }}
+{{- if $https }}
+
+  The application terminates TLS itself, so the controller has to be told to
+  speak TLS to the backend. On ingress-nginx that is an Ingress annotation,
+  nginx.ingress.kubernetes.io/backend-protocol: HTTPS. On Traefik it belongs on
+  the Service instead, as services.server.annotations. Without it you get a 502.
+{{- end }}
+{{- else if eq (dig "server" "type" "ClusterIP" (.Values.services | default dict)) "LoadBalancer" }}
+  A LoadBalancer service was created. Watch for its address with:
+
+    kubectl -n {{ .Release.Namespace }} get svc {{ $svc }} -w
+{{- else }}
+  No ingress and a ClusterIP service, so nothing is exposed outside the cluster.
+  To have a look:
+
+    kubectl -n {{ .Release.Namespace }} port-forward svc/{{ $svc }} 8080:{{ include "ansibleforms.server.port" . }}
+    {{ $scheme }}://127.0.0.1:8080/
+{{- end }}
+
+Signing in
+
+  Username: {{ dig "server" "env" "ADMIN_USERNAME" "admin" (.Values.applications | default dict) }}
+  Password: kubectl -n {{ .Release.Namespace }} get secret {{ $secretName }} -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+{{ if not (dig "existingSecret" "" (.Values.secrets | default dict)) }}
+  Those credentials came from your values file, which means they are also in
+  the release history that Helm keeps in the cluster. To keep them out of it,
+  put them in a Secret you manage and point secrets.existingSecret at it.
+{{ end }}
+Checking it works
+
+  helm test {{ .Release.Name }} --namespace {{ .Release.Namespace }}
+{{ if not (dig "enabled" true (.Values.mysql | default dict)) }}
+Database
+
+  mysql.enabled is false, so this release talks to {{ include "ansibleforms.mysql.host" . }} and
+  the chart deployed no database. AnsibleForms migrates an existing schema
+  forward but does not create one, so if you have not already, apply
+  files/schema.sql to that server once. Until you do, the pages load and every
+  query behind them fails.
+{{- end }}
