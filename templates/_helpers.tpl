@@ -265,3 +265,66 @@ app.kubernetes.io/component: database
 {{- fail (printf "\n\ncontainers.%s.securityContext drops capabilities or forbids privilege escalation, but nothing makes the pod run as a non-root user.\n\nThe image starts as root and steps down to its own user with setgid, and those settings block exactly that. The container starts and dies with \"setgid: Operation not permitted\", over and over.\n\nThe two contexts belong together. Either keep both as the chart ships them, or clear both: set containers.%s.securityContext to null as well as containers.%s.podSecurityContext.\n" $key $key $key) -}}
 {{- end -}}
 {{- end -}}
+
+{{- /*
+  Annotations that make a configuration change actually reach the container.
+
+  Nothing here rolled a pod when its configuration changed. The Secret would be
+  updated and the running process kept the environment it started with; the
+  my.cnf ConfigMap would be updated and the file inside the container never
+  moved at all, because it is mounted with subPath and subPath mounts are frozen
+  at pod creation. Measured on a live release: the ConfigMap asked for
+  innodb_buffer_pool_size 256M, the file in the pod still read "[mysqld]" and
+  MySQL was running on the 128M default.
+
+  A checksum of what the chart renders, written into the pod template, turns
+  that into an ordinary rollout.
+*/}}
+{{- define "ansibleforms.ownedConfigChecksums" -}}
+{{- $root := .root -}}
+{{- $out := dict -}}
+{{- if dig "enabled" true ($root.Values.rollOnChange | default dict) -}}
+{{- /*
+  Renders to nothing when secrets.existingSecret is set, which is correct: the
+  chart does not own that Secret and cannot see it from here. Turn on
+  rollOnChange.external for that case.
+*/}}
+{{- $_ := set $out "checksum/secret" (include (print $root.Template.BasePath "/secrets.yaml") $root | sha256sum) -}}
+{{- if .withMyCnf -}}
+{{- $_ := set $out "checksum/my-cnf" (include (print $root.Template.BasePath "/mysql-configmap-my-cnf.yaml") $root | sha256sum) -}}
+{{- end -}}
+{{- if and .withForms (dig "external" false ($root.Values.rollOnChange | default dict)) -}}
+{{- $_ := set $out "checksum/external-config" (include "ansibleforms.externalConfigChecksum" $root) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $out -}}
+{{- end -}}
+
+{{- /*
+  The same idea for the objects the chart does not own: a Secret supplied
+  through secrets.existingSecret, and the ConfigMaps holding forms.yaml, the
+  extra form definitions and custom.js.
+
+  Reading them means a lookup against the cluster, and lookup returns nothing
+  during `helm template`. Anything that renders first and applies afterwards,
+  Argo CD and Flux included, would therefore see a checksum that differs from
+  the one an install produces. That is why rollOnChange.external is off by
+  default.
+*/}}
+{{- define "ansibleforms.externalConfigChecksum" -}}
+{{- $parts := list -}}
+{{- $secrets := (.Values.secrets | default dict) -}}
+{{- if $secrets.existingSecret -}}
+{{- $found := lookup "v1" "Secret" .Release.Namespace $secrets.existingSecret -}}
+{{- if $found -}}{{- $parts = append $parts (toString ($found.data | default dict)) -}}{{- end -}}
+{{- end -}}
+{{- $forms := (.Values.forms | default dict) -}}
+{{- range $key := (list "configMap" "extraFormsConfigMap" "customJs") -}}
+{{- $mount := (dig $key (dict) $forms) -}}
+{{- if and $mount.enabled $mount.name -}}
+{{- $found := lookup "v1" "ConfigMap" $.Release.Namespace $mount.name -}}
+{{- if $found -}}{{- $parts = append $parts (toString ($found.data | default dict)) -}}{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $parts | join "|" | sha256sum -}}
+{{- end -}}

@@ -664,6 +664,30 @@ kubectl logs -l app.kubernetes.io/component=server
 kubectl logs -l app.kubernetes.io/component=database
 ```
 
+## Configuration changes restart what reads them
+
+A pod reads its configuration once, when it starts. Before 6.2.7 changing the
+Secret left the running process with the environment it was given, and changing
+`mysql.config` did not even reach the container: the file is mounted with
+`subPath`, and subPath mounts are frozen at pod creation.
+
+The chart writes a checksum of what it renders into the pod template, so a
+change to either becomes an ordinary rollout. An upgrade that changes nothing
+leaves the pods alone.
+
+```yaml
+rollOnChange:
+  enabled: true    # the generated Secret and the MySQL my.cnf
+  external: false  # an existingSecret, and the forms ConfigMaps
+```
+
+`external` is off by default because seeing those objects means reading them
+from the cluster, and that returns nothing during `helm template`. Anything that
+renders first and applies afterwards, Argo CD and Flux included, would get a
+checksum that does not match the one an install produces. Turn it on if you run
+Helm directly and want a `forms.yaml` change to restart the server on the next
+upgrade.
+
 ## Checking an install
 
 The chart ships a `helm test`:

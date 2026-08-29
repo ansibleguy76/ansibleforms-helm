@@ -307,6 +307,62 @@ jobs:
               sys.exit("::error::MySQL probes are wrong.")
           PY
 
+      # The checksums have to react to the right thing and to nothing else. Too
+      # sensitive and every upgrade churns the pods for no reason; not sensitive
+      # enough and a configuration change never reaches the container, which is
+      # the bug they exist to fix.
+      - name: Checksums track configuration, and only configuration
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import subprocess, sys, yaml
+
+          def sums(*extra):
+              out = subprocess.run(
+                  ["helm", "template", "sums", ".", "--values", "ci/default-values.yaml", *extra],
+                  capture_output=True, text=True, check=True).stdout
+              got = {}
+              for d in yaml.safe_load_all(out):
+                  if not d or d["kind"] != "Deployment":
+                      continue
+                  ann = d["spec"]["template"]["metadata"].get("annotations") or {}
+                  name = d["metadata"]["name"].rsplit("-", 1)[-1]
+                  for k, v in ann.items():
+                      if k.startswith("checksum/"):
+                          got[f"{name} {k}"] = v
+              return got
+
+          base = sums()
+          failures = []
+
+          if not base:
+              failures.append("no checksums at all, rollOnChange is on by default")
+          if base != sums():
+              failures.append("two identical renders disagree, so every upgrade would churn")
+
+          pw = sums("--set", "applications.server.env.ADMIN_PASSWORD=something-else")
+          for key in ("server checksum/secret", "mysql checksum/secret"):
+              if base.get(key) == pw.get(key):
+                  failures.append(f"{key} did not move when the password changed")
+          if base.get("mysql checksum/my-cnf") != pw.get("mysql checksum/my-cnf"):
+              failures.append("the my.cnf checksum moved when only the password changed")
+
+          cnf = sums("--set", "mysql.config=[mysqld]\ninnodb_buffer_pool_size = 256M\n")
+          if base.get("mysql checksum/my-cnf") == cnf.get("mysql checksum/my-cnf"):
+              failures.append("the my.cnf checksum did not move when my.cnf changed")
+          if base.get("server checksum/secret") != cnf.get("server checksum/secret"):
+              failures.append("the secret checksum moved when only my.cnf changed")
+
+          if sums("--set", "rollOnChange.enabled=false"):
+              failures.append("rollOnChange.enabled=false still wrote checksums")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit("::error::The rollout checksums are not tracking what they should.")
+          print(f"Checked {len(base)} checksums: stable when nothing changes, "
+                f"and each one moves only for its own input.")
+          PY
+
       - name: Install kubeconform
         run: |
           curl -sSLo /tmp/kubeconform.tar.gz \
@@ -665,6 +721,20 @@ jobs:
             echo "::error::The application does not answer after the upgrade."; exit 1; }
 
           echo "Data and storage survived the upgrade from $PREV to $HERE, and the app answers."
+
+          # The rollout checksums are computed from what the chart renders, so an
+          # upgrade that changes nothing must not move them. If it does, every
+          # release churns both pods for no reason.
+          before="$(kubectl -n "$NS" get pods -o name | sort | tr '\n' ' ')"
+          helm upgrade upg . --namespace "$NS" --values ci/no-ingress-values.yaml --wait --timeout 12m >/dev/null
+          after="$(kubectl -n "$NS" get pods -o name | sort | tr '\n' ' ')"
+          if [ "$before" != "$after" ]; then
+            echo "::error::An upgrade with no changes recycled the pods."
+            echo "  before: $before"
+            echo "  after:  $after"
+            exit 1
+          fi
+          echo "An upgrade with nothing changed leaves both pods alone."
       - name: Dump cluster state on failure
         if: failure()
         run: |

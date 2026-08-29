@@ -450,6 +450,36 @@ forms:
     name: ''
 
 # ------------------------------------------------------------------------------
+# ROLLING WHEN THE CONFIGURATION CHANGES
+# ------------------------------------------------------------------------------
+# A pod reads its configuration once, when it starts. Change the Secret and the
+# running process keeps the environment it was given; change the my.cnf
+# ConfigMap and the file inside the container does not move at all, because it
+# is mounted with subPath and subPath mounts are frozen at pod creation.
+#
+# Measured on a live release before this existed: the ConfigMap asked for
+# innodb_buffer_pool_size 256M, the file in the pod still read "[mysqld]" and
+# MySQL was running on the 128M default, with no indication anything was wrong.
+#
+# With this on, a checksum of what the chart renders goes into the pod template,
+# so a configuration change becomes an ordinary rollout.
+rollOnChange:
+  # The objects the chart renders itself: the generated Secret and the MySQL
+  # my.cnf. Always deterministic, since the checksum comes from the templates.
+  enabled: true
+
+  # The objects it does not: a Secret supplied through secrets.existingSecret,
+  # and the ConfigMaps under `forms` holding forms.yaml, the extra definitions
+  # and custom.js. Seeing those means reading them from the cluster, and that
+  # returns nothing during `helm template`, so anything rendering first and
+  # applying afterwards, Argo CD and Flux included, would get a checksum that
+  # does not match the one an install produces.
+  #
+  # Turn it on if you drive the chart with helm directly and want a forms.yaml
+  # change to restart the server on the next upgrade.
+  external: false
+
+# ------------------------------------------------------------------------------
 # HELM TEST
 # ------------------------------------------------------------------------------
 # The pod `helm test` runs. It fetches the front page through the Service and
