@@ -1,0 +1,19 @@
+---
+# A server policy with nobody allowed in. An ingress rule with no peers permits
+# nothing, so this would quietly cut the server off from its own ingress
+# controller. The chart refuses it instead.
+networkPolicy:
+  enabled: true
+  server:
+    enabled: true
+    from: []
+
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret

@@ -1,0 +1,85 @@
+{{- $np := (.Values.networkPolicy | default dict) }}
+{{- if $np.enabled }}
+{{- $npServer := ($np.server | default dict) }}
+{{- if and $npServer.enabled (not $npServer.from) }}
+{{- fail "\n\nnetworkPolicy.server.enabled is true but networkPolicy.server.from is empty.\n\nAn ingress rule with no peers allows nothing, so the policy would cut the server off from everything, including your ingress controller. Name who may connect, usually the namespace the controller runs in.\n" }}
+{{- end }}
+{{- if dig "enabled" true (.Values.mysql | default dict) }}
+{{- /*
+  Only the server of this release may open a connection to this database.
+  Scoped by the selector labels rather than by namespace, so two releases in one
+  namespace do not end up allowed to reach each other's database.
+*/}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ansibleforms.mysql.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ansibleforms.mysql.labels" . | nindent 4 }}
+  {{- with (include "ansibleforms.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ansibleforms.mysql.selectorLabels" . | nindent 6 }}
+  {{- /* Ingress only. Egress is left alone: locking it down would need to know
+         what your playbooks talk to, and guessing breaks more than it protects. */}}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "ansibleforms.server.selectorLabels" . | nindent 14 }}
+        {{- /*
+          And the chart's own test pod, which exists only while `helm test` is
+          running and checks it can reach the database. Without this the test
+          reports a failure that is really the policy doing its job. It is not a
+          hole worth worrying about: a policy written with pod labels is only
+          ever as strong as who can create a pod with those labels, and the
+          server's labels are no harder to copy than these.
+        */}}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ include "ansibleforms.name" . }}
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/component: test
+        {{- with $np.mysqlExtraFrom }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: 3306
+{{- end }}
+{{- if $npServer.enabled }}
+{{- if dig "enabled" true (.Values.mysql | default dict) }}
+---
+{{- end }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "ansibleforms.server.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "ansibleforms.server.labels" . | nindent 4 }}
+  {{- with (include "ansibleforms.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "ansibleforms.server.selectorLabels" . | nindent 6 }}
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        {{- toYaml $npServer.from | nindent 8 }}
+      ports:
+        - protocol: TCP
+          port: {{ include "ansibleforms.server.port" . }}
+{{- end }}
+{{- end }}

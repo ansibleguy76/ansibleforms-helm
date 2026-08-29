@@ -1,0 +1,33 @@
+---
+# The NetworkPolicy on, with an extra peer and a policy for the server too, so
+# the render covers every branch of that template.
+networkPolicy:
+  enabled: true
+  mysqlExtraFrom:
+    - namespaceSelector:
+        matchLabels:
+          kubernetes.io/metadata.name: backups
+  server:
+    enabled: true
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      HTTPS: 0
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+ingress:
+  enabled: false
+
+storages:
+  mysql: {size: 1Gi, accessMode: ReadWriteOnce}
+  server: {size: 1Gi, accessMode: ReadWriteOnce}

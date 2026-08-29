@@ -91,21 +91,68 @@ jobs:
       - name: Combinations the chart must refuse
         run: |
           set -euo pipefail
-          for f in test/values/refused/*-values.yaml; do
-            echo "::group::$f"
-            if helm template refused . --values "$f" >/dev/null 2>&1; then
-              echo "::error::$f rendered. It is supposed to be refused."
-              exit 1
-            fi
-            out="$(helm template refused . --values "$f" 2>&1 || true)"
-            echo "$out" | grep -q "podSecurityContext" || {
-              echo "::error::$f is refused, but the message does not name podSecurityContext."
-              echo "$out" | tail -5
-              exit 1
-            }
-            echo "$out" | sed -n '2,6p'
-            echo "::endgroup::"
-          done
+          python3 - <<'PY'
+          import glob, subprocess, sys, yaml
+
+          failures = []
+          for path in sorted(glob.glob("test/values/refused/*-values.yaml")):
+              out = subprocess.run(["helm", "template", "refused", ".", "--values", path],
+                                   capture_output=True, text=True)
+              if out.returncode == 0:
+                  failures.append(f"{path} rendered. It is supposed to be refused.")
+                  continue
+
+              message = out.stderr + out.stdout
+              # Refusing is half the job. A message that does not name a value
+              # the file actually sets leaves the reader nowhere, so require
+              # one of its top level keys to appear in the text.
+              keys = [k for k in (yaml.safe_load(open(path)) or {})]
+              if not any(k in message for k in keys):
+                  failures.append(f"{path} is refused, but the message names none of {keys}")
+                  continue
+
+              first = next((l for l in message.splitlines() if l.strip()
+                            and not l.startswith("Error:")), "")
+              print(f"{path}\n  {first.strip()}")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit("::error::The chart is not refusing what it should, or not explaining why.")
+          PY
+
+      # appVersion and the default image are two places saying the same thing,
+      # and nothing kept them together. Bump one and forget the other and the
+      # chart reports a version it does not deploy, which is the sort of thing
+      # nobody notices until they are debugging something else entirely.
+      - name: appVersion and the default image must agree
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import sys, yaml
+
+          chart = yaml.safe_load(open("Chart.yaml"))
+          values = yaml.safe_load(open("values.yaml"))
+          app = str(chart["appVersion"])
+          image = values["containers"]["server"]["image"]
+          mysql = values["containers"]["mysql"]["image"]
+
+          failures = []
+          if ":" not in image:
+              failures.append(f"containers.server.image {image!r} has no tag at all")
+          elif image.rsplit(":", 1)[1] != app:
+              failures.append(f"appVersion is {app} but containers.server.image is {image}")
+
+          # The comment in values.yaml says this one is pinned deliberately,
+          # because MySQL does not support downgrades and a floating tag turns a
+          # reschedule into an unattended major upgrade with no way back.
+          if ":" not in mysql or mysql.rsplit(":", 1)[1] in ("latest", ""):
+              failures.append(f"containers.mysql.image {mysql!r} is not pinned to a version")
+
+          if failures:
+              print("\n".join(failures))
+              sys.exit("::error::The chart's own image references disagree with themselves.")
+          print(f"appVersion {app} matches {image}, and {mysql} is pinned.")
+          PY
 
       - name: helm lint
         run: |
@@ -872,3 +919,79 @@ jobs:
         run: |
           kubectl get ingress -A || true
           kubectl -n ingress-nginx logs deployment/ingress-nginx-controller --tail=100 || true
+
+  # NetworkPolicy is enforced by the CNI, and kind ships kindnet, which does not
+  # enforce it. A policy test on a default cluster would pass while proving
+  # nothing at all, so this one brings its own Calico.
+  #
+  # It earned its place immediately: writing it turned up a false pass in the
+  # chart's own helm test, which reported a healthy database while the policy
+  # was dropping the traffic.
+  networkpolicy:
+    name: Enforce the NetworkPolicy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+
+      - uses: helm/kind-action@v1
+        with:
+          node_image: kindest/node:v1.33.12
+          config: test/kind/calico.yaml
+
+      - name: Install Calico
+        run: |
+          set -euo pipefail
+          kubectl apply -f https://raw.githubusercontent.com/projectcalico/calico/v3.29.1/manifests/calico.yaml
+          kubectl -n kube-system rollout status daemonset/calico-node --timeout=8m
+          kubectl wait --for=condition=Ready node --all --timeout=5m
+
+      - name: A pod with no business reaching MySQL must not reach it
+        run: |
+          set -euo pipefail
+          kubectl create namespace np
+          helm install np . --namespace np --values ci/no-ingress-values.yaml \
+            --wait --timeout 12m
+
+          # MySQL sends a handshake as soon as a connection is accepted, so
+          # bytes on the wire are proof and silence is proof of the opposite.
+          # An exit code is not: a dropped connection times out exactly like a
+          # closed port, which is how the false pass got in.
+          probe() {
+            kubectl -n np run "$1" --rm -i --restart=Never --quiet \
+              --image=curlimages/curl:8.10.1 --overrides="$2" 2>/dev/null | grep RESULT
+          }
+          plain='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":100,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"probe","image":"curlimages/curl:8.10.1","securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}},"command":["sh","-c","out=$(curl -s --max-time 8 --connect-timeout 8 telnet://np-mysql:3306 </dev/null 2>/dev/null || true); [ -n \"$out\" ] && echo \"RESULT reached ${#out}\" || echo RESULT blocked"]}]}}'
+
+          echo "::group::without a policy, anything in the namespace can reach the database"
+          before="$(probe baseline "$plain")"
+          echo "  $before"
+          case "$before" in
+            *reached*) ;;
+            *) echo "::error::The baseline could not reach MySQL, so this proves nothing."; exit 1 ;;
+          esac
+          echo "::endgroup::"
+
+          echo "::group::with the policy on"
+          helm upgrade np . --namespace np --values ci/no-ingress-values.yaml \
+            --set networkPolicy.enabled=true --wait --timeout 12m
+          kubectl -n np get networkpolicy
+          after="$(probe blocked "$plain")"
+          echo "  $after"
+          case "$after" in
+            *blocked*) echo "  the same pod can no longer reach the database" ;;
+            *) echo "::error::The policy is on and an unrelated pod still reached MySQL."; exit 1 ;;
+          esac
+          echo "::endgroup::"
+
+          # And the release still works, which is the half a policy usually breaks
+          helm test np --namespace np --logs
+
+      - name: Dump cluster state on failure
+        if: failure()
+        run: |
+          kubectl -n np get all,networkpolicy || true
+          kubectl -n np describe pods || true
