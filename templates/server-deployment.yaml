@@ -68,7 +68,10 @@ spec:
         {{- toYaml . | nindent 8 }}
         {{- end }}
       {{- /* podAnnotations wins over commonAnnotations on a clash */}}
-      {{- $podAnn := merge (dict) ($server.podAnnotations | default dict) (.Values.commonAnnotations | default dict) }}
+      {{- /* Most specific wins: podAnnotations, then commonAnnotations, then the
+             checksums the chart works out for itself. */}}
+      {{- $checksums := fromYaml (include "ansibleforms.ownedConfigChecksums" (dict "root" $ "withForms" true)) }}
+      {{- $podAnn := merge (dict) ($server.podAnnotations | default dict) (.Values.commonAnnotations | default dict) $checksums }}
       {{- with $podAnn }}
       annotations:
         {{- toYaml . | nindent 8 }}

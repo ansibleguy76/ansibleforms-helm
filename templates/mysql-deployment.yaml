@@ -58,7 +58,10 @@ spec:
         {{- with $mysql.podLabels }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- $podAnn := merge (dict) ($mysql.podAnnotations | default dict) (.Values.commonAnnotations | default dict) }}
+      {{- /* Most specific wins: podAnnotations, then commonAnnotations, then the
+             checksums the chart works out for itself. */}}
+      {{- $checksums := fromYaml (include "ansibleforms.ownedConfigChecksums" (dict "root" $ "withMyCnf" true)) }}
+      {{- $podAnn := merge (dict) ($mysql.podAnnotations | default dict) (.Values.commonAnnotations | default dict) $checksums }}
       {{- with $podAnn }}
       annotations:
         {{- toYaml . | nindent 8 }}

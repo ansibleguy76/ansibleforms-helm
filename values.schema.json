@@ -1314,6 +1314,20 @@
           }
         }
       }
+    },
+    "rollOnChange": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "external": {
+          "type": "boolean"
+        }
+      }
     }
   }
 }

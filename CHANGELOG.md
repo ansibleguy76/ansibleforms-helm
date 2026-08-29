@@ -1,5 +1,43 @@
 # Changelog
 
+## 6.2.7
+
+Changing the configuration now restarts what reads it.
+
+### Added
+
+- **Rollout checksums.** A pod reads its configuration once, when it starts.
+  Change the Secret and the running process keeps the environment it was given.
+  Change the MySQL `my.cnf` and the file inside the container does not move at
+  all, because it is mounted with `subPath` and subPath mounts are frozen at pod
+  creation.
+
+  Measured on a live release before this existed: the ConfigMap asked for
+  `innodb_buffer_pool_size = 256M`, the file inside the pod still read
+  `[mysqld]`, and MySQL was running on the 128M default, with nothing anywhere
+  saying so. The Secret told the same story: it held the new admin password
+  while the process was still running with the old one.
+
+  The chart now writes a checksum of what it renders into the pod template, so a
+  configuration change is an ordinary rollout. On by default, and off with
+  `rollOnChange.enabled: false`.
+
+- **`rollOnChange.external`,** for the objects the chart does not own: a Secret
+  supplied through `secrets.existingSecret`, and the ConfigMaps under `forms`
+  holding `forms.yaml`, the extra definitions and `custom.js`. Seeing those
+  means reading them from the cluster, and that returns nothing during
+  `helm template`, so anything that renders first and applies afterwards, Argo
+  CD and Flux included, would get a checksum that does not match the one an
+  install produces. Off by default for that reason. Turn it on if you drive the
+  chart with Helm directly and want a `forms.yaml` change to restart the server
+  on the next upgrade.
+
+### Notes
+
+An upgrade that changes nothing leaves both pods alone, which CI now checks by
+running the same upgrade twice and comparing the pod names. Checksums that move
+when they should not are worse than no checksums at all.
+
 ## 6.2.6
 
 Three things a published chart is expected to have and this one did not: a
