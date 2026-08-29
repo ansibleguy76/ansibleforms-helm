@@ -30,6 +30,8 @@
   minutes before it is.
 */}}
 {{- $probe := ($mysql.probeCommand | default (list "sh" "-c" "mysqladmin ping -h 127.0.0.1 --protocol=TCP --silent")) }}
+{{- include "ansibleforms.assertNoRootInitContainer" (dict "component" $mysql "key" "mysql") }}
+{{- include "ansibleforms.assertSecurityContextsAgree" (dict "component" $mysql "key" "mysql") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,11 +71,10 @@ spec:
       {{- end }}
 
       {{- /*
-        Empty by default, so nothing changes for an existing release. The
-        official image starts as root and steps down to the mysql user itself
-        after it has taken ownership of the data directory, so forcing
-        runAsNonRoot here breaks a first boot. Set it when you know your volume
-        already has the right ownership.
+        The image normally starts as root only to take ownership of the data
+        directory before stepping down to uid 999. fsGroup in values asks the
+        kubelet to do that instead, so the container never runs as root and the
+        pod is accepted where the restricted Pod Security Standard is enforced.
       */}}
       {{- with $mysql.podSecurityContext }}
       securityContext:

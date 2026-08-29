@@ -37,6 +37,8 @@
 {{- $scheme := include "ansibleforms.server.scheme" . }}
 {{- $sensitive := dict "ENCRYPTION_SECRET" true "ADMIN_USERNAME" true "ADMIN_PASSWORD" true }}
 
+{{- include "ansibleforms.assertNoRootInitContainer" (dict "component" $server "key" "server") }}
+{{- include "ansibleforms.assertSecurityContextsAgree" (dict "component" $server "key" "server") }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -89,12 +91,20 @@ spec:
         is allowed under the restricted pod security standard.
         Set bindPrivilegedPorts to false if your kubelet refuses it, and expose
         the app on a port above 1024 instead.
+
+        The rest of the pod security context comes from values, not from here,
+        so that overriding a field to false actually takes: Helm merges values
+        files properly, while the template's own merge treats false as absent
+        and would quietly put the default back. The sysctls are only added when
+        you have not written your own.
       */}}
-      {{- if or (not (hasKey $server "bindPrivilegedPorts")) $server.bindPrivilegedPorts }}
+      {{- $podSec := ($server.podSecurityContext | default dict) }}
+      {{- if and (or (not (hasKey $server "bindPrivilegedPorts")) $server.bindPrivilegedPorts) (not $podSec.sysctls) }}
+      {{- $podSec = merge (dict "sysctls" (list (dict "name" "net.ipv4.ip_unprivileged_port_start" "value" "0"))) $podSec }}
+      {{- end }}
+      {{- with $podSec }}
       securityContext:
-        sysctls:
-          - name: net.ipv4.ip_unprivileged_port_start
-            value: "0"
+        {{- toYaml . | nindent 8 }}
       {{- end }}
 
 

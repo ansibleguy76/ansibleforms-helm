@@ -1,0 +1,29 @@
+---
+# What someone upgrading with their own copy of values.yaml still has: the
+# init container the chart used to ship, running as root to chown the volume,
+# next to a pod security context that says runAsNonRoot.
+#
+# The kubelet refuses the combination and the pod sits in
+# Init:CreateContainerConfigError while helm reports the release as deployed,
+# so the chart refuses to render it instead.
+applications:
+  mysql:
+    password: ci-not-a-real-password
+    user: root
+  server:
+    env:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-not-a-real-password
+      ENCRYPTION_SECRET: ci-not-a-real-secret
+
+containers:
+  server:
+    initContainers:
+      - name: prepare-persistent-volume
+        image: ansibleguy/ansibleforms:6.2.1
+        command: ["sh", "-c", "chown -R 1000:1000 /app/dist/persistent"]
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+          - name: server-persistent-storage
+            mountPath: /app/dist/persistent
