@@ -924,6 +924,9 @@
             "string",
             "null"
           ]
+        },
+        "generate": {
+          "type": "boolean"
         }
       }
     },

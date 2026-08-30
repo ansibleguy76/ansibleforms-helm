@@ -612,6 +612,73 @@ jobs:
           echo "The two releases are fully independent."
           helm uninstall blue green --namespace side-by-side
 
+      # Generation only works where the chart can read the cluster, so it cannot
+      # be covered by rendering. What matters is that the value it invents is
+      # the right length and, above all, that it never changes afterwards:
+      # ENCRYPTION_SECRET is the key stored credentials are encrypted with, and
+      # a new one turns them into rubbish without raising anything.
+      - name: Generated credentials are the right size and never move
+        run: |
+          set -euo pipefail
+          kubectl create namespace generated
+          helm install generated . --namespace generated \
+            --values ci/no-ingress-values.yaml \
+            --set applications.mysql.password=null \
+            --set applications.server.env.ADMIN_PASSWORD=null \
+            --set applications.server.env.ENCRYPTION_SECRET=null \
+            --set secrets.generate=true --wait --timeout 12m
+
+          read_key() {
+            kubectl -n generated get secret generated-secrets \
+              -o jsonpath="{.data.$1}" | base64 -d
+          }
+          enc="$(read_key ENCRYPTION_SECRET)"
+          echo "ENCRYPTION_SECRET is ${#enc} characters"
+          # The application uses it as an aes-256 key directly, padding anything
+          # shorter with a constant from its own source and cutting anything
+          # longer. 32 is the only length that is entirely secret.
+          [ "${#enc}" = "32" ] || {
+            echo "::error::Generated ENCRYPTION_SECRET is ${#enc} characters, not 32."; exit 1; }
+          [ -n "$(read_key DB_PASSWORD)" ] && [ -n "$(read_key ADMIN_PASSWORD)" ] || {
+            echo "::error::A generated credential came out empty."; exit 1; }
+
+          before="$enc"
+          pod_before="$(kubectl -n generated get pods -o name | sort | tr '\n' ' ')"
+          for i in 1 2; do
+            helm upgrade generated . --namespace generated \
+              --values ci/no-ingress-values.yaml \
+              --set applications.mysql.password=null \
+              --set applications.server.env.ADMIN_PASSWORD=null \
+              --set applications.server.env.ENCRYPTION_SECRET=null \
+              --set secrets.generate=true --wait --timeout 12m >/dev/null
+          done
+          [ "$(read_key ENCRYPTION_SECRET)" = "$before" ] || {
+            echo "::error::ENCRYPTION_SECRET changed across an upgrade. Everything it encrypted is now unreadable."
+            exit 1; }
+          [ "$(kubectl -n generated get pods -o name | sort | tr '\n' ' ')" = "$pod_before" ] || {
+            echo "::error::Generation recycled the pods on an upgrade that changed nothing."; exit 1; }
+          echo "Stable across two upgrades, and nothing was recycled."
+
+          # helm.sh/resource-policy: keep means uninstall leaves it, so a
+          # reinstall finds the same key and whatever it encrypted still opens.
+          helm uninstall generated --namespace generated
+          kubectl -n generated get secret generated-secrets >/dev/null || {
+            echo "::error::uninstall removed the generated Secret. A reinstall would lose the data."
+            exit 1; }
+          kubectl -n generated delete pvc --all --wait=true
+          helm install generated . --namespace generated \
+            --values ci/no-ingress-values.yaml \
+            --set applications.mysql.password=null \
+            --set applications.server.env.ADMIN_PASSWORD=null \
+            --set applications.server.env.ENCRYPTION_SECRET=null \
+            --set secrets.generate=true --wait --timeout 12m
+          [ "$(read_key ENCRYPTION_SECRET)" = "$before" ] || {
+            echo "::error::A reinstall generated a different key."; exit 1; }
+          echo "A reinstall picked the same key back up."
+
+          helm test generated --namespace generated --logs
+          helm uninstall generated --namespace generated
+
       # The restricted Pod Security Standard is enforced by default on several
       # managed distributions, and until 6.2.5 this chart could not be installed
       # under it at all: the MySQL container had no security context and the

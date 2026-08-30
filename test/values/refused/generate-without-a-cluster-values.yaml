@@ -1,0 +1,10 @@
+---
+# secrets.generate with nothing to read. Rendering it offline would invent a new
+# ENCRYPTION_SECRET every time, and that is not a password to reset: it is the
+# key stored credentials are encrypted with, and aes-256-ctr returns rubbish
+# rather than an error when the key is wrong.
+#
+# This is exactly what `helm template` does, and therefore what Argo CD and Flux
+# do before applying, so the chart says so instead of doing it.
+secrets:
+  generate: true

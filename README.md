@@ -381,6 +381,41 @@ Depending on your environment, choose an existing namespace or choose to create 
 helm install ansibleforms ./ansibleforms-helm -f ./my_values.yaml -n ansibleforms --create-namespace
 ```
 
+### 6b. Letting the chart make up the credentials
+
+`secrets.generate: true` invents whatever you have not supplied, on the first
+install, and reads it back on every upgrade afterwards so it never changes:
+
+```bash
+helm upgrade --install ansibleforms ansibleforms/ansibleforms \
+  --namespace ansibleforms --create-namespace \
+  --set secrets.generate=true
+
+kubectl -n ansibleforms get secret ansibleforms-secrets \
+  -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
+```
+
+**This does not work with Argo CD or Flux, and the chart will tell you so.**
+Both render with `helm template`, where there is no cluster to read, and the
+chart would mint a different secret every time. `ENCRYPTION_SECRET` is not a
+password you can reset: it is the key AnsibleForms encrypts stored credentials
+with, `aes-256-ctr` does not authenticate, and decrypting with the wrong key
+returns rubbish instead of raising anything. For GitOps use
+`secrets.existingSecret` as described just above; that is what External Secrets
+with Vault, Sealed Secrets and SOPS are for, and the chart never touches a
+Secret it did not create.
+
+The generated Secret is annotated `helm.sh/resource-policy: keep`, so
+`helm uninstall` leaves it behind and a reinstall picks the same key back up.
+Delete it by hand when you really do mean to start over. It exists nowhere else:
+back it up.
+
+`ENCRYPTION_SECRET` is generated at exactly 32 characters, which is what
+AnsibleForms uses as an aes-256 key. Shorter and it pads the rest with a
+constant from its own source code, so a ten character secret is ten characters
+of secret and twenty-two of public knowledge. Longer and the remainder is cut
+off. The chart says so after an install if yours is not 32.
+
 ### 6. Credentials from a Secret you already manage
 
 By default the chart builds a Secret named `<release>-secrets` out of the
