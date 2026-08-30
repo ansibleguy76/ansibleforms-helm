@@ -262,10 +262,18 @@ containers:
     replicas: 1
 
     # Accepts either "Recreate" / "RollingUpdate" or the Kubernetes shape
-    # ({type: Recreate}). Recreate is the safer choice here: the server and the
-    # persistent volume are shared, so two pods alive at once means two
-    # schedulers and two seed runs against the same database.
-    strategy: "RollingUpdate"
+    # ({type: Recreate}).
+    #
+    # Recreate, because the server and its persistent volume are shared and two
+    # pods alive at once means two schedulers and two seed runs against the same
+    # database. This used to say RollingUpdate immediately under a comment
+    # arguing for Recreate, and with replicas at 1 and the default maxSurge of
+    # 25% Kubernetes rounds up to one extra pod, so every single rollout really
+    # did run two AnsibleForms against the same database for a few seconds.
+    #
+    # The cost is that a rollout now has a gap instead of an overlap. With one
+    # replica sharing one volume there was never a real overlap to keep.
+    strategy: "Recreate"
 
     # Written into the pod template, so changing them triggers a rollout. Handy
     # for a checksum annotation when the forms ConfigMap changes.
@@ -448,6 +456,39 @@ forms:
     enabled: false
     mountPath: /app/dist/persistent/forms
     name: ''
+
+# ------------------------------------------------------------------------------
+# NETWORK POLICY
+# ------------------------------------------------------------------------------
+# Off by default, and not only out of caution: NetworkPolicy is enforced by the
+# CNI, and several common ones do not enforce it at all. Flannel is the usual
+# example. A policy that nothing enforces is worse than no policy, because it
+# looks like protection in `kubectl get netpol` and is not.
+#
+# What `enabled` gives you is a policy on the bundled MySQL: nothing may open a
+# connection to it except the AnsibleForms server of the same release. Egress is
+# left alone everywhere, since the server has to reach whatever your playbooks
+# talk to, and guessing that list would break more than it protects.
+networkPolicy:
+  enabled: false
+
+  # Extra peers allowed to reach MySQL, as plain NetworkPolicyPeer entries. For
+  # a backup job, or a tool you run by hand.
+  mysqlExtraFrom: []
+  #   - namespaceSelector:
+  #       matchLabels:
+  #         kubernetes.io/metadata.name: backups
+
+  # A policy for the server as well. This one needs telling who may connect,
+  # because an ingress controller lives in its own namespace and which one
+  # differs per cluster. With `from` empty the policy would let nothing in at
+  # all, so the chart refuses to render that rather than cutting you off.
+  server:
+    enabled: false
+    from: []
+    #   - namespaceSelector:
+    #       matchLabels:
+    #         kubernetes.io/metadata.name: ingress-nginx
 
 # ------------------------------------------------------------------------------
 # ROLLING WHEN THE CONFIGURATION CHANGES

@@ -1,5 +1,65 @@
 # Changelog
 
+## 6.2.8
+
+### Changed
+
+- **The server's update strategy is `Recreate`.** It was `RollingUpdate`,
+  written immediately below a comment arguing for `Recreate` because "two pods
+  alive at once means two schedulers and two seed runs against the same
+  database". With `replicas: 1` and the default `maxSurge` of 25%, Kubernetes
+  rounds up to one extra pod, so every rollout really did run two AnsibleForms
+  against the same database and the same volume for a few seconds. The comment
+  was right and the value was wrong.
+
+  A rollout now has a gap where it used to have an overlap. With one replica
+  sharing one volume there was never a real overlap to keep.
+
+### Added
+
+- **`networkPolicy.enabled`.** A policy on the bundled MySQL: nothing may open a
+  connection to it except the AnsibleForms server of the same release, plus
+  anything named in `networkPolicy.mysqlExtraFrom`. Scoped by selector labels
+  rather than by namespace, so two releases in one namespace cannot reach each
+  other's database.
+
+  Off by default, and not only out of caution. NetworkPolicy is enforced by the
+  CNI and several common ones, Flannel among them, do not enforce it at all. A
+  policy nothing enforces is worse than no policy, because it looks like
+  protection.
+
+  `networkPolicy.server.enabled` adds one for the server too. It needs
+  `networkPolicy.server.from` filled in, because an ingress rule with no peers
+  allows nothing and would cut the server off from its own ingress controller;
+  the chart refuses to render that rather than doing it.
+
+  Egress is untouched everywhere. The server has to reach whatever your
+  playbooks talk to, and guessing that list would break more than it protects.
+
+### Fixed
+
+- **`helm test` could report a healthy database while nothing could reach it.**
+  Added in 6.2.6, the check read curl's exit code and treated everything except
+  "connection refused" and "could not resolve" as success. A connection a
+  NetworkPolicy is dropping times out, and a timeout looks exactly like a closed
+  port, so the test passed while the database was unreachable. Found while
+  writing the policy above, which is the only reason it turned up at all.
+
+  It now reads the handshake MySQL sends the moment a connection is accepted.
+  Bytes on the wire are proof; silence is proof of the opposite. Checked against
+  a database scaled to zero and against one behind a policy dropping the
+  traffic, and it fails on both.
+
+### Notes
+
+CI gains a job that installs Calico into a kind cluster with the default CNI
+turned off, then shows an unrelated pod reaching MySQL before the policy and not
+after. It also checks the baseline first, so a run where nothing could reach the
+database in the first place fails rather than quietly proving nothing.
+
+A second CI check keeps `appVersion` and the default server image in step, and
+refuses a floating tag on the MySQL image.
+
 ## 6.2.7
 
 Changing the configuration now restarts what reads it.

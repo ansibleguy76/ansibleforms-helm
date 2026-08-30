@@ -72,6 +72,12 @@ every release. Finally it rolls the release back to the published version it
 started from and checks the storage and the data again, walking the whole change
 backwards.
 
+**Enforce the NetworkPolicy.** kind ships kindnet, which does not enforce
+NetworkPolicy, so this job turns the default CNI off and installs Calico. It
+shows an unrelated pod reaching MySQL before the policy is on and not after,
+checking the baseline first so a run where nothing could reach the database
+anyway fails rather than quietly proving nothing.
+
 **Route through a real ingress controller.** kind ships without one, so the
 Ingress used to be rendered, validated and never asked for a single page. This
 installs ingress-nginx and fetches the application through it, both plain and

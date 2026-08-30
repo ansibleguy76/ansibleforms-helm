@@ -86,24 +86,24 @@ spec:
           {{- if dig "enabled" true (.Values.mysql | default dict) }}
 
           {{- /*
-            curl is the only client in this image, and it does not speak MySQL.
-            It does not have to: what matters is whether the TCP connection is
-            accepted, and the exit code says so on its own. Measured against
-            this very chart, 7 is "couldn't connect" and 6 is "couldn't
-            resolve", while an open port answering something curl cannot parse
-            gives 1. So anything other than 6 or 7 means the connection was
-            established, which is the question being asked.
+            MySQL sends a handshake packet the moment a connection is accepted,
+            so reading any bytes at all is proof the connection happened. That
+            is deliberately not an exit code: a first attempt at this read curl's
+            status instead, treating anything but "refused" and "unresolved" as
+            success, and it reported a healthy database while a NetworkPolicy
+            was silently dropping the traffic. A dropped connection times out
+            exactly like a closed port does, so the code could not tell them
+            apart. Bytes on the wire can.
           */}}
           db='{{ include "ansibleforms.mysql.host" . }}:{{ dig "port" "3306" ((.Values.applications | default dict).mysql | default dict) }}'
           echo "Connecting to $db"
-          rc=0
-          curl -s --max-time 10 --connect-timeout 10 "http://${db}" \
-            >/dev/null 2>&1 </dev/null || rc=$?
-          case "$rc" in
-            6) echo "  $db does not resolve."; exit 1 ;;
-            7) echo "  nothing is accepting connections on $db."; exit 1 ;;
-            *) echo "  the database accepts connections (curl exit $rc)" ;;
-          esac
+          handshake="$(curl -s --max-time 15 --connect-timeout 10 "telnet://${db}" \
+            </dev/null 2>/dev/null || true)"
+          if [ -z "$handshake" ]; then
+            echo "  nothing answered on $db: it is closed, unreachable, or something is dropping the traffic."
+            exit 1
+          fi
+          echo "  the database answered with ${#handshake} bytes of handshake"
           {{- end }}
 
           echo "OK"

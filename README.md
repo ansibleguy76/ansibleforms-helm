@@ -737,6 +737,36 @@ Below the top level the schema only checks types and enumerations, and lets
 unknown keys through, so a values file carrying somebody's own leftover keeps
 working across an upgrade.
 
+## Keeping the database to itself
+
+`networkPolicy.enabled` puts a policy on the bundled MySQL so that nothing can
+open a connection to it except the AnsibleForms server of the same release:
+
+```yaml
+networkPolicy:
+  enabled: true
+  # Anything else that needs in, a backup job for instance
+  mysqlExtraFrom: []
+  # A policy for the server too. `from` is required: an ingress rule with no
+  # peers allows nothing, and would cut the server off from your ingress
+  # controller, so the chart refuses to render it empty.
+  server:
+    enabled: false
+    from:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: ingress-nginx
+```
+
+Off by default, and not only out of caution: NetworkPolicy is enforced by the
+CNI, and several common ones, Flannel among them, do not enforce it at all.
+A policy nothing enforces is worse than no policy, because it looks like
+protection in `kubectl get netpol` and is not. Check your CNI before turning
+this on and believing it.
+
+Egress is left alone. The server has to reach whatever your playbooks talk to,
+and guessing that list would break more than it protects.
+
 ## Pod Security Standards
 
 The chart installs as it is into a namespace enforcing the **restricted** Pod
