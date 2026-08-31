@@ -284,12 +284,7 @@ app.kubernetes.io/component: database
 {{- $root := .root -}}
 {{- $out := dict -}}
 {{- if dig "enabled" true ($root.Values.rollOnChange | default dict) -}}
-{{- /*
-  Renders to nothing when secrets.existingSecret is set, which is correct: the
-  chart does not own that Secret and cannot see it from here. Turn on
-  rollOnChange.external for that case.
-*/}}
-{{- $_ := set $out "checksum/secret" (include (print $root.Template.BasePath "/secrets.yaml") $root | sha256sum) -}}
+{{- $_ := set $out "checksum/secret" (include "ansibleforms.secretChecksum" $root) -}}
 {{- if .withMyCnf -}}
 {{- $_ := set $out "checksum/my-cnf" (include (print $root.Template.BasePath "/mysql-configmap-my-cnf.yaml") $root | sha256sum) -}}
 {{- end -}}
@@ -327,4 +322,45 @@ app.kubernetes.io/component: database
 {{- end -}}
 {{- end -}}
 {{- $parts | join "|" | sha256sum -}}
+{{- end -}}
+
+{{- /*
+  The credentials the values file declares, hashed. Not the rendered Secret,
+  which is what this did at first and which was wrong twice over.
+
+  Re-rendering secrets.yaml evaluates it a second time, and with
+  secrets.generate on that second pass calls randAlphaNum again, so the Secret
+  was written with one set of values and the annotation held the hash of
+  another. It corrected itself on the next upgrade, at the cost of a rollout
+  nobody asked for.
+
+  The rendered Secret also carries the chart version in its labels, so the hash
+  moved on every chart bump whether or not a credential had.
+
+  Hashing what the values declare fixes both. A generated value is not
+  configuration anybody wrote down: it is created once, read back on every
+  upgrade afterwards and never changes, so it has nothing to contribute here.
+  Change a password in your values and this moves, which is the whole point.
+*/}}
+{{- define "ansibleforms.secretChecksum" -}}
+{{- $secrets := (.Values.secrets | default dict) -}}
+{{- if $secrets.existingSecret -}}
+{{- /* Not ours to watch. rollOnChange.external is the switch for that one. */ -}}
+{{- "" | sha256sum -}}
+{{- else -}}
+{{- $mysql := ((.Values.applications | default dict).mysql | default dict) -}}
+{{- $env := (((.Values.applications | default dict).server | default dict).env | default dict) -}}
+{{- $placeholders := list "<ENTER_PASSWORD_HERE>" "<ENTER_SECRET_HERE>" "" -}}
+{{- $parts := list -}}
+{{- range $value := (list
+      ($mysql.user | default "root")
+      ($env.ADMIN_USERNAME | default "admin")
+      ($mysql.password | default "")
+      ($env.ENCRYPTION_SECRET | default "")
+      ($env.ADMIN_PASSWORD | default "")) -}}
+{{- $v := toString $value -}}
+{{- $parts = append $parts (ternary "" $v (has $v $placeholders)) -}}
+{{- end -}}
+{{- $parts | join "|" | sha256sum -}}
+{{- end -}}
 {{- end -}}

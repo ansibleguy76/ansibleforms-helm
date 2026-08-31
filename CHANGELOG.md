@@ -1,5 +1,61 @@
 # Changelog
 
+## 6.2.9
+
+Credentials the chart can make up for itself, and a correction to the rollout
+checksums from 6.2.7.
+
+### Added
+
+- **`secrets.generate`.** Off by default. With it on, anything you have not
+  supplied is invented on the first install and read back on every upgrade
+  afterwards, so it never changes. `<ENTER_PASSWORD_HERE>` stops being
+  something you have to replace before the chart will render.
+
+  `ENCRYPTION_SECRET` is generated at exactly 32 characters, and that number is
+  not arbitrary. AnsibleForms uses it directly as an aes-256 key: shorter and it
+  pads the rest with a constant that is in its own source code, so a ten
+  character secret is ten characters of secret and twenty-two of public
+  knowledge; longer and everything past 32 is cut off and never counts.
+
+  **It refuses to run under `helm template`,** and so under Argo CD and Flux,
+  because there is no cluster to read and it would mint a different secret on
+  every render. `ENCRYPTION_SECRET` is not a password you can reset: it is the
+  key stored credentials are encrypted with, `aes-256-ctr` does not
+  authenticate, and decrypting with the wrong key returns plausible-looking
+  rubbish rather than an error, which the application would then hand to a
+  playbook. The chart detects that it is rendering blind and says so, naming
+  `secrets.existingSecret` as the answer.
+
+  For GitOps that remains the right shape: keep the credentials in a Secret of
+  their own, from External Secrets and Vault, Sealed Secrets or SOPS, and point
+  `secrets.existingSecret` at it. The chart has never touched a Secret it did
+  not create.
+
+  The generated Secret carries `helm.sh/resource-policy: keep`, so
+  `helm uninstall` leaves it and a reinstall picks the same key back up instead
+  of quietly making the old data unreadable. Delete it by hand to start over.
+
+- **A note about `ENCRYPTION_SECRET` after install** when yours is not 32
+  characters, saying how much of the key is actually yours and warning that
+  changing it on a live release does not fail, it just turns stored credentials
+  into rubbish.
+
+### Fixed
+
+- **`checksum/secret` was computed from the rendered Secret**, which was wrong
+  twice over. Rendering it again evaluates the template a second time, so with
+  `secrets.generate` on the random values in the annotation were not the ones
+  written to the Secret, and the mismatch corrected itself on the next upgrade
+  at the cost of a rollout nobody asked for. The rendered Secret also carries
+  the chart version in its labels, so the hash moved on every chart bump whether
+  a credential had changed or not.
+
+  It hashes what the values declare now. A generated value is not configuration
+  anyone wrote down: it is created once, read back afterwards and never changes,
+  so it has nothing to contribute. Change a password in your values and the
+  hash still moves, which was the point.
+
 ## 6.2.8
 
 ### Changed

@@ -562,6 +562,34 @@ tests:
 secrets:
   existingSecret: ''
 
+  # Make up whatever is not supplied, instead of refusing to render. Off by
+  # default, because it only works where the chart can read the cluster.
+  #
+  # On a first install it generates what is missing; on every upgrade after that
+  # it reads back what it wrote and leaves it alone, so the values are stable.
+  # ENCRYPTION_SECRET is generated at exactly 32 characters, which is what the
+  # application uses as an aes-256 key. Shorter and it pads the rest with a
+  # constant out of its own source code, so a ten character secret is ten
+  # characters of secret and twenty-two of public knowledge; longer and the
+  # remainder is cut off and never counts.
+  #
+  # It refuses to run under `helm template`, and therefore under Argo CD and
+  # Flux, because there is no cluster to read and it would mint a different
+  # secret on every render. ENCRYPTION_SECRET is not a password you can reset:
+  # it is the key stored credentials are encrypted with, aes-256-ctr does not
+  # authenticate, and decrypting with the wrong key returns rubbish instead of
+  # an error.
+  #
+  # For GitOps, keep the credentials in a Secret of their own and point
+  # existingSecret at it. External Secrets with Vault, Sealed Secrets and SOPS
+  # all fit that shape, and the chart never touches a Secret it did not make.
+  #
+  # The generated Secret is annotated helm.sh/resource-policy: keep, so
+  # `helm uninstall` leaves it behind and a reinstall picks the same values back
+  # up rather than quietly making the old data unreadable. Delete it by hand
+  # when you really do mean to start over.
+  generate: false
+
 # ------------------------------------------------------------------------------
 # INGRESS CONFIGURATION
 # ------------------------------------------------------------------------------

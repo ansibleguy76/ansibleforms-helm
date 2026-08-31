@@ -35,10 +35,38 @@ Signing in
 
   Username: {{ dig "server" "env" "ADMIN_USERNAME" "admin" (.Values.applications | default dict) }}
   Password: kubectl -n {{ .Release.Namespace }} get secret {{ $secretName }} -o jsonpath='{.data.ADMIN_PASSWORD}' | base64 -d
-{{ if not (dig "existingSecret" "" (.Values.secrets | default dict)) }}
+{{- $placeholders := list "<ENTER_PASSWORD_HERE>" "<ENTER_SECRET_HERE>" "" }}
+{{- $fromValues := false }}
+{{- range $v := (list
+      (dig "mysql" "password" "" (.Values.applications | default dict))
+      (dig "server" "env" "ADMIN_PASSWORD" "" (.Values.applications | default dict))
+      (dig "server" "env" "ENCRYPTION_SECRET" "" (.Values.applications | default dict))) }}
+{{- if not (has (toString $v) $placeholders) }}{{ $fromValues = true }}{{ end }}
+{{- end }}
+{{ if and (not (dig "existingSecret" "" (.Values.secrets | default dict))) $fromValues }}
   Those credentials came from your values file, which means they are also in
   the release history that Helm keeps in the cluster. To keep them out of it,
   put them in a Secret you manage and point secrets.existingSecret at it.
+{{ else if dig "generate" false (.Values.secrets | default dict) }}
+  The chart made these up on the first install and reads them back on every
+  upgrade afterwards, so they do not change. They exist nowhere but in that
+  Secret: back it up, or you will be resetting the admin password and losing
+  every credential AnsibleForms has encrypted.
+{{ end }}
+{{- $enc := toString (dig "server" "env" "ENCRYPTION_SECRET" "" (.Values.applications | default dict)) }}
+{{- if and $enc (ne $enc "<ENTER_SECRET_HERE>") (ne (len $enc) 32) }}
+About ENCRYPTION_SECRET
+{{ if lt (len $enc) 32 }}
+  Yours is {{ len $enc }} characters. AnsibleForms uses it directly as an
+  aes-256 key, so it pads anything shorter to 32 with a constant that is in its
+  own source code: {{ sub 32 (len $enc) }} of those 32 bytes are public knowledge.
+{{- else }}
+  Yours is {{ len $enc }} characters. AnsibleForms cuts it to 32 before using it
+  as an aes-256 key, so the last {{ sub (len $enc) 32 }} never count for anything.
+{{- end }}
+  Worth fixing on a new install. Worth thinking twice about on an old one: it is
+  the key stored credentials are encrypted with, and changing it does not fail,
+  it just quietly turns them into rubbish. Take a backup and re-enter them.
 {{ end }}
 Checking it works
 
